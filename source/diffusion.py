@@ -4,6 +4,7 @@ from torch import nn
 from matplotlib import pyplot as plt
 import os
 import numpy as np
+import random
 
 # -------------------------------------------------------------------------------------------------------
 # Setup
@@ -43,24 +44,6 @@ def img_tensor_to_pil(img):
     ])
     return transforms(img)
 
-def visualize_tensor_img(img):
-    transforms = torchvision.transforms.Compose([
-        torchvision.transforms.Lambda(lambda data: (data / torch.abs(data).max() + 1) / 2),
-        # torchvision.transforms.Lambda(lambda data: (data + 1) / 2), # recover all -1 to 0 values then div/2 to get it back to 0-1
-        # torchvision.transforms.Lambda(lambda data: data.permute(1, 2, 0)), # swap from (channel, height, width) to (height, width, channel), note this is needed when using plt.imshow
-        torchvision.transforms.Lambda(lambda data: (data.to('cpu') * 255.).numpy()), # bring it back from 0-1 to RGB 0-255 scale
-        torchvision.transforms.ToPILImage(), # note this is only needed when using plt.imshow
-    ])
-
-    # if img is in batch form, take the 1st of batch
-    if len(img.shape) == 4:
-        img = img[0]
-    img = transforms(img[0])
-    # img will be in shape (n_imgs, h, c), so to plot them all in a row have cols=n_imgs
-    plt.figure()
-    plt.imshow(img)
-    plt.show()
-    # plot_img(img, cols=img.shape[0])
 
 def load_data():
     transforms = torchvision.transforms.Compose([
@@ -129,6 +112,9 @@ def simluate_forward_diffusion(dataloader, n_imgs=1, show_n_steps=5):
 
 
 if __name__ == '__main__':
+    torch.manual_seed(0)
+    np.random.seed(0)
+    random.seed(0)
     # -------------------------------------------------------------------------------------------------------
     # Hyperparameter Tuning
     # -------------------------------------------------------------------------------------------------------
@@ -161,6 +147,6 @@ if __name__ == '__main__':
     # uncomment to see the input imgs
 
     dataloader = load_data()
-    # visualize_input_imgs(dataloader, 5)
+    # visualize_input_imgs(dataloader, 3)
 
-    simluate_forward_diffusion(dataloader, n_imgs=3, show_n_steps=10)
+    simluate_forward_diffusion(dataloader, n_imgs=5, show_n_steps=10)
