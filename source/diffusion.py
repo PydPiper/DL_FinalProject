@@ -356,11 +356,11 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Start of Process
     # -------------------------------------------------------------------------------------------------------
-    # uncomment to see the input imgs
 
     data_train, data_test = load_data(DATASET)
     # NOTE: when the img is rgb the shape is [samples, height, width, channels] else its [samples, height, width]
     IMG_CHANNELS = data_train.dataset.data.shape[-1] if len(data_train.dataset.data.shape) == 4 else 1
+    # uncomment to see the input imgs
     visualize_input_imgs(data_train, 3)
 
     simluate_forward_diffusion(data_train, n_imgs=5, show_n_steps=10)
