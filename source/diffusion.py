@@ -323,7 +323,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DATASET = 'CIFAR10' # MNIST CIFAR10 CelebA
+    DATASET = 'MNIST' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
 
     # -------------------------------------------------------------------------------------------------------
@@ -367,7 +367,7 @@ if __name__ == '__main__':
     model = Unet()
     model.to(DEVICE)
     optimizer = Adam(model.parameters(), lr=0.001)
-    epochs = 100 # Try more!
+    epochs = 100 
 
     for epoch in range(epochs):
         for step, batch in enumerate(data_train):
