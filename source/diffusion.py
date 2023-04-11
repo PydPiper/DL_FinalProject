@@ -127,6 +127,7 @@ def fwd_dif_impulse_pil(imgs):
 def simluate_forward_diffusion(dataloader, n_imgs=1, show_n_steps=5):
     noise_model = "gaussian"
     iter_dataloader = iter(dataloader)
+    # key 0 means that you are pulling out the x values (ie. imgs), key 1 would be the ground truth values "y"
     imgs = next(iter_dataloader)[0][:n_imgs]
     stepsize = int(T/show_n_steps)
     plt.figure()
@@ -360,9 +361,9 @@ if __name__ == '__main__':
     data_train, data_test = load_data(DATASET)
     # NOTE: when the img is rgb the shape is [samples, height, width, channels] else its [samples, height, width]
     IMG_CHANNELS = data_train.dataset.data.shape[-1] if len(data_train.dataset.data.shape) == 4 else 1
-    # visualize_input_imgs(dataloader, 3)
+    visualize_input_imgs(data_train, 3)
 
-    # simluate_forward_diffusion(dataloader, n_imgs=5, show_n_steps=10)
+    simluate_forward_diffusion(data_train, n_imgs=5, show_n_steps=10)
 
     model = Unet()
     model.to(DEVICE)
