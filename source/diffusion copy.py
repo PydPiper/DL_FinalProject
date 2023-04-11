@@ -6,8 +6,6 @@ from matplotlib import pyplot as plt
 import os
 import numpy as np
 import random
-import skimage as sk
-from .corrupt_image import *
 
 # -------------------------------------------------------------------------------------------------------
 # Setup
@@ -48,19 +46,6 @@ def img_tensor_to_pil(img):
     return transforms(img)
 
 
-def img_tensors_to_pil(imgs):
-    if len(imgs.shape) > 4:
-        raise ValueError(f'Input img.shape={imgs.shape}, img.shape must be [n, channel, height, width]')
-    transforms = torchvision.transforms.Compose([
-        torchvision.transforms.Lambda(lambda data: data.permute(0, 2, 3, 1)), # swap from (channel, height, width) to (height, width, channel), note this is needed when using plt.imshow
-        torchvision.transforms.Lambda(lambda data: (data / torch.abs(data).max() + 1) / 2), # recover all -1 to 0 values
-        torchvision.transforms.Lambda(lambda data: (data.to('cpu') * 255.).numpy().astype(np.uint64)), # bring it back from 0-1 to RGB 0-255 scale
-        # torchvision.transforms.ToPILImage(), # note this is only needed when using plt.imshow
-    ])
-    return transforms(imgs)
-
-
-
 def load_data(dataset='MNIST'):
     transforms = torchvision.transforms.Compose([
         torchvision.transforms.Resize((IMG_SIZE, IMG_SIZE)),
@@ -89,7 +74,7 @@ def beta_scheduler(steps=300, start=0.0001, end=0.02, beta_type='linear'):
         raise ValueError(f'Incorrect beta scheduler type={beta_type}')
     return rv
 
-def forward_diffusion_sample(x_0, t, corruption='gaussian'):
+def forward_diffusion_sample(x_0, t):
     """takes an original img and returns a noised version of it at any given time step "t"
 
     :param x_0: _description_
@@ -110,55 +95,26 @@ def forward_diffusion_sample(x_0, t, corruption='gaussian'):
     # rand_like is nothing special just a normal distribution thats the same size as the input
     noise = torch.randn_like(x_0)
     # mean + variance
-    corrupt_imgs = SQRT_ALPHA_BAR[t] * x_0 + SQRT_ONE_MINUS_ALPHA_BAR[t] * noise
-    return corrupt_imgs, noise
-
-
-def fwd_dif_impulse_pil(imgs):
-    # assume a vector of images are coming in with [num_imgs, height, width, ch]
-    c_range = [.03, .06, .09, 0.17, 0.27]
-    c = 0.17
-    for i, img in enumerate(imgs):
-        x = sk.util.random_noise(np.array(img) / 255., mode='s&p', amount=c)
-        imgs[i] = np.clip(x, 0, 1) * 255
-
-    return imgs
+    return SQRT_ALPHA_BAR[t] * x_0 + SQRT_ONE_MINUS_ALPHA_BAR[t] * noise, noise
 
 def simluate_forward_diffusion(dataloader, n_imgs=1, show_n_steps=5):
-    noise_model = "gaussian"
+
     iter_dataloader = iter(dataloader)
     # key 0 means that you are pulling out the x values (ie. imgs), key 1 would be the ground truth values "y"
     imgs = next(iter_dataloader)[0][:n_imgs]
+
     stepsize = int(T/show_n_steps)
     plt.figure()
-    if noise_model == "gaussian":
-        for col_i, t in enumerate(range(0, T, stepsize)):
-            # NOTE: calling next() returns a [tensor(x), tensor(y)]
-            # where x.shape = [batch size, channel, height, width]
-            #       y.shape = [batch size]
-            imgs, noises = forward_diffusion_sample(imgs, t)
-            for row_i, img in enumerate(imgs):
-                img = img_tensor_to_pil(img)
-                ax = plt.subplot(n_imgs, show_n_steps, row_i*show_n_steps + col_i + 1)
-                ax.set_axis_off()
-                plt.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
-    else:
-        # try with an impulse noise corruption as a test
-        # todo - make modular
-        # convert images from [n, ch, height, width] tensor to PIL [n, height, width, ch]
-        imgs = img_tensors_to_pil(imgs)
-        for col_i, t in enumerate(range(0, T, stepsize)):
-            # NOTE: calling next() returns a [tensor(x), tensor(y)]
-            # where x.shape = [batch size, channel, height, width]
-            #       y.shape = [batch size]
-            imgs = fwd_dif_impulse_pil(imgs)
-            for row_i, img in enumerate(imgs):
-                # img = img_tensor_to_pil(img)
-                ax = plt.subplot(n_imgs, show_n_steps, row_i*show_n_steps + col_i + 1)
-                ax.set_axis_off()
-                plt.imshow(img, cmap='gray')
-
-
+    for col_i, t in enumerate(range(0, T, stepsize)):
+        # NOTE: calling next() returns a [tensor(x), tensor(y)]
+        # where x.shape = [batch size, channel, height, width]
+        #       y.shape = [batch size]
+        imgs, noises = forward_diffusion_sample(imgs, t)
+        for row_i, img in enumerate(imgs):
+            img = img_tensor_to_pil(img)
+            ax = plt.subplot(n_imgs, show_n_steps, row_i*show_n_steps + col_i + 1)
+            ax.set_axis_off()
+            plt.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
     plt.show()
     plt.close()
 
@@ -166,17 +122,12 @@ def simluate_forward_diffusion(dataloader, n_imgs=1, show_n_steps=5):
 # Diffusion Models
 # -------------------------------------------------------------------------------------------------------
 
-class Block(nn.Module):
-    def __init__(self, dim_in_ch, dim_out_ch, dim_time_emb, up_sample=False):
+class Encode(nn.Module):
+    def __init__(self, dim_in_ch, dim_out_ch, dim_time_emb):
         super().__init__()
         self.linear =  nn.Linear(dim_time_emb, dim_out_ch)
-        if up_sample:
-            self.conv1 = nn.Conv2d(2*dim_in_ch, dim_out_ch, kernel_size=3, padding=1)
-            self.transform = nn.ConvTranspose2d(dim_out_ch, dim_out_ch, kernel_size=5)
-        else:
-            self.conv1 = nn.Conv2d(dim_in_ch, dim_out_ch, kernel_size=3, padding=1)
-            self.transform = nn.Conv2d(dim_out_ch, dim_out_ch, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(dim_out_ch, dim_out_ch, kernel_size=3)
+        self.conv1 = nn.Conv2d(dim_in_ch, dim_out_ch, kernel_size=3, padding='same')
+        self.conv2 = nn.Conv2d(dim_out_ch, dim_out_ch, kernel_size=3, padding='same')
         self.norm = nn.BatchNorm2d(dim_out_ch)
         self.relu  = nn.ReLU()
 
@@ -191,8 +142,36 @@ class Block(nn.Module):
         h = h + time_emb
         # Second Conv
         h = self.norm(self.relu(self.conv2(h)))
-        # Down or Upsample
-        h = self.transform(h)
+        return h
+
+
+class Decode(nn.Module):
+    def __init__(self, dim_in_ch, dim_out_ch, dim_time_emb, up_kernel, up_stride, up_padding):
+        super().__init__()
+        self.linear =  nn.Linear(dim_time_emb, dim_out_ch)
+        # h=1:
+        # self.deconv = nn.Upsample(scale_factor=2, mode='nearest')
+        self.deconv = nn.ConvTranspose2d(dim_in_ch, dim_in_ch, kernel_size=up_kernel, stride=up_stride, padding=up_padding)
+        self.conv1 = nn.Conv2d(dim_in_ch*2, dim_out_ch, kernel_size=3, padding='same')
+        self.conv2 = nn.Conv2d(dim_out_ch, dim_out_ch, kernel_size=3, padding='same')
+        self.norm = nn.BatchNorm2d(dim_out_ch)
+        self.relu  = nn.ReLU()
+
+    def forward(self, x, x_encode, t):
+        # Upsample
+        h = self.deconv(x)
+        # cat input with encode input
+        x = torch.cat((h, x_encode), dim=1)           
+        # First conv
+        h = self.norm(self.relu(self.conv1(x)))
+        # Time embedding
+        time_emb = self.relu(self.linear(t))
+        # Extend last 2 dimensions so we can add h + time_emb
+        time_emb = time_emb.reshape(time_emb.shape + (1,1))
+        # Add time channel
+        h = h + time_emb
+        # Second Conv
+        h = self.norm(self.relu(self.conv2(h)))
         return h
 
 
@@ -240,13 +219,19 @@ class Unet(nn.Module):
         # note this is index to n-1 because we are keying fwd 1 for input_dim, output_dim
         self.downs = nn.ModuleList([])
         for i in range(len(down_channels)-1):
-            self.downs.append(Block(down_channels[i], down_channels[i+1], time_emb_dim))
-        self.pool = nn.MaxPool2d(2, stride=2)
+            self.downs.append(Encode(down_channels[i], down_channels[i+1], time_emb_dim))
+        self.pool = nn.MaxPool2d(2)
 
         # Upsample
         self.ups = nn.ModuleList([])
+        up_params = [
+            [3, 1, 0],
+            [4, 2, 1],
+            [4, 2, 1],
+            [4, 2, 1],
+        ]
         for i in range(len(up_channels)-1):
-            self.ups.append(Block(up_channels[i], up_channels[i+1], time_emb_dim, up_sample=True))
+            self.ups.append(Decode(up_channels[i], up_channels[i+1], time_emb_dim, *up_params[i]))
 
         self.output = nn.Conv2d(up_channels[-1], image_channels, out_dim)
 
@@ -256,18 +241,16 @@ class Unet(nn.Module):
         # Initial conv
         x = self.conv0(x)
         # Unet
-        residual_inputs = []
+        encode_outputs = []
         for i, down in enumerate(self.downs):
             x = down(x, t)
-            residual_inputs.append(x)
-            # if i != self.n_channels:
-            #     x = self.pool(x)
+            if i != self.n_channels-1:
+                encode_outputs.append(x) 
+                x = self.pool(x)
 
         for up in self.ups:
-            residual_x = residual_inputs.pop()
-            # Add residual x as additional channels
-            x = torch.cat((x, residual_x), dim=1)           
-            x = up(x, t)
+            encode_output = encode_outputs.pop()
+            x = up(x, encode_output, t)
         return self.output(x)
 
 def get_loss(model, x_0, t):
@@ -284,9 +267,7 @@ def sample_timestep(x, t):
     """
     
     # Call model (current image - noise prediction)
-    model_mean = SQRT_RECIP_ALPHA[t] * (
-        x - BETA[t] * model(x, t) / SQRT_ONE_MINUS_ALPHA_BAR[t]
-    )
+    model_mean = SQRT_RECIP_ALPHA[t] * (x - BETA[t] * model(x, t) / SQRT_ONE_MINUS_ALPHA_BAR[t])
     
     if t == 0:
         return model_mean
@@ -302,7 +283,6 @@ def sample_plot_image(n_imgs=1, show_n_steps=10):
     stepsize = int(T/show_n_steps)
     plt.figure()
     col_i = 0
-    # NOTE: we have to reverse the img from t=T backwards to 0, and keep on calling the model to revert the noise 1 time step at a time
     for t in range(0, T)[::-1]:
         t = torch.full((1,), t, device=DEVICE, dtype=torch.long)
         imgs = sample_timestep(imgs, t)
@@ -328,7 +308,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DATASET = 'MNIST' # MNIST CIFAR10 CelebA
+    DATASET = 'CIFAR10' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
 
     # -------------------------------------------------------------------------------------------------------
@@ -365,9 +345,9 @@ if __name__ == '__main__':
     # NOTE: when the img is rgb the shape is [samples, height, width, channels] else its [samples, height, width]
     IMG_CHANNELS = data_train.dataset.data.shape[-1] if len(data_train.dataset.data.shape) == 4 else 1
     # uncomment to see the input imgs
-    visualize_input_imgs(data_train, 3)
+    # visualize_input_imgs(data_train, 3)
 
-    simluate_forward_diffusion(data_train, n_imgs=5, show_n_steps=10)
+    # simluate_forward_diffusion(data_train, n_imgs=5, show_n_steps=10)
 
     model = Unet()
     model.to(DEVICE)
@@ -385,4 +365,5 @@ if __name__ == '__main__':
             optimizer.step()
             if step == 0:
                 print(f"Epoch {epoch} | step {step:03d} Loss: {loss.item()} ")
-                sample_plot_image()
+                if epoch % 5 == 0:
+                    sample_plot_image()
