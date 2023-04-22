@@ -12,7 +12,7 @@ from torch import nn
 from torch.optim import Adam
 from matplotlib import pyplot as plt
 import numpy as np
-
+import skimage as sk
 # -------------------------------------------------------------------------------------------------------
 # Import source modules
 # -------------------------------------------------------------------------------------------------------
@@ -43,26 +43,39 @@ def beta_scheduler(steps=300, start=0.0001, end=0.02, beta_type='linear'):
 
 def forward_diffusion_sample(x_0, t):
     """takes an original img and returns a noised version of it at any given time step "t"
-
-    :param x_0: _description_
-    :type x_0: _type_
+    :param x_0: sized [n, ch, height, width]
+    :type x_0: PyTorch Tensor
     :param t: _description_
-    :type t: _type_
+    :type t: int or PyTorch Tensor
     :return: _description_
     :rtype: _type_
     """
-
-    # t can come in for n_batch size, need to reshape to multiply
-    if not isinstance(t, int):
-        t = t.reshape((t.shape[0],1,1,1))
-
-    # using "reparameterization" we can calcluate any noised sample without iterating over the previous n-samples
-    # x_t = sqrt(alpha_bar)*x_0 + sqrt(1-alpha_bar)*noise
     x_0 = x_0.to(DEVICE)
-    # rand_like is nothing special just a normal distribution thats the same size as the input
-    noise = torch.randn_like(x_0)
-    # mean + variance
-    return SQRT_ALPHA_BAR[t] * x_0 + SQRT_ONE_MINUS_ALPHA_BAR[t] * noise, noise
+    # t can come in for n_batch size, need to reshape to multiply
+    if isinstance(t, int):
+        noise = np.ones(x_0.shape)
+        noise = torch.tensor(sk.util.random_noise(noise, mode='pepper', amount=INTENSITY_SCHEDULE[t].item(), seed=0)).to(DEVICE)
+        distorted_img = x_0*noise
+
+        # distorted_img = sk.util.random_noise(np.array(x_0.cpu()), mode='s&p', amount=INTENSITY_SCHEDULE[t].item(),
+        #                                      seed=0)
+
+    else:
+        noise = torch.empty(x_0.shape)
+        blank_arr = np.ones(x_0.shape)
+        for i, ts in enumerate(t):
+            noise[i] = torch.tensor(sk.util.random_noise(blank_arr[i], mode='pepper', amount=INTENSITY_SCHEDULE[ts].item(),
+                                                    seed=0))
+        noise = noise.to(DEVICE)
+        distorted_img = x_0 * noise
+
+    # determinate amount of noise applied to the image x_0 based at time t i.e. x_t = D(x_0, t) = x_0 * f(t)
+    # TODO - verify that this will actually work
+    # x_distorted = x_t + noise
+    # distorted_img = torch.tensor(distorted_img).to(DEVICE)
+    # noise = x_0 - distorted_img
+
+    return distorted_img, noise
 
 
 @torch.no_grad()
@@ -72,15 +85,23 @@ def sample_timestep(x, t):
     the denoised image. 
     Applies noise to this image, if we are not in the last step yet.
     """
-    
+    # TODO - THIS STEP IS REALLY QUITE HARD
+    # FIXME - Is this the restoration operator? Ask Viktor.
+    # https://github.com/bahjat-kawar/ddrm
     # Call model (current image - noise prediction)
+    # calculate noise at time t
+    blank_arr = np.ones(x.shape)
+    noise = torch.tensor(sk.util.random_noise(blank_arr, mode='pepper', amount=INTENSITY_SCHEDULE[t].item(), seed=0)).to(
+        DEVICE)
+
     model_mean = SQRT_RECIP_ALPHA[t] * (x - BETA[t] * model(x, t) / SQRT_ONE_MINUS_ALPHA_BAR[t])
     
     if t == 0:
         return model_mean
     else:
         noise = torch.randn_like(x)
-        return model_mean + torch.sqrt(POSTERIOR_VARIANCE[t]) * noise 
+        output = model_mean + torch.sqrt(POSTERIOR_VARIANCE[t]) * noise
+        return output
 
 
 
@@ -95,7 +116,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DIFFUSION_NAME = 'noise'
+    DIFFUSION_NAME = 'impulse'
     DATASET = 'MNIST' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
@@ -108,7 +129,7 @@ if __name__ == '__main__':
     BATCH_SIZE = 128 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
     LEARNING_RATE = 0.001
     EPOCHS = 10
-
+    INTENSITY_SCHEDULE = beta_scheduler(steps=T, start=0.03, end=0.8, beta_type='linear')
     # -------------------------------------------------------------------------------------------------------
     # Diffusion Global Parameters
     # -------------------------------------------------------------------------------------------------------

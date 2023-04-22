@@ -37,10 +37,17 @@ def visualize_input_imgs(dataloader, n_imgs=1, dataset='MNIST', diffusion_name='
     plt.close()
 
 def img_tensor_to_pil(img):
-    if len(img.shape) > 3:
+    if len(img.shape) > 5:
         raise ValueError(f'Input img.shape={img.shape}, img.shape must be [channel, height, width]')
+    elif len(img.shape) == 4:
+        # assume img is in the form [n, ch, height, width] --> [n, height, width, ch]
+        sequence = (0, 2, 3, 1)
+    else:
+        # assume img is in the form [ch, height, width] --> [height, width, ch]
+        sequence = (1, 2, 0)
+
     transforms = torchvision.transforms.Compose([
-        torchvision.transforms.Lambda(lambda data: data.permute(1, 2, 0)), # swap from (channel, height, width) to (height, width, channel), note this is needed when using plt.imshow
+        torchvision.transforms.Lambda(lambda data: data.permute(sequence)), # note this is needed when using plt.imshow
         torchvision.transforms.Lambda(lambda data: (data / torch.abs(data).max() + 1) / 2), # recover all -1 to 0 values
         torchvision.transforms.Lambda(lambda data: (data.to('cpu') * 255.).numpy().astype(np.uint64)), # bring it back from 0-1 to RGB 0-255 scale
         # torchvision.transforms.ToPILImage(), # note this is only needed when using plt.imshow
