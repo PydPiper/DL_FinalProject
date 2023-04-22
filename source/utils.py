@@ -48,10 +48,16 @@ def img_tensor_to_pil(img):
     return transforms(img)
 
 @torch.no_grad()
-def sample_plot_model_image(sample_timestep, max_t=300, n_imgs=1, show_n_steps=10, epoch='0', img_channels=3, img_size=32, 
+def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_train, max_t=300, n_imgs=1, show_n_steps=10, epoch='0',
                             dataset='MNIST', diffusion_name='noise', show_plots=False):
-    # Sample noise
-    imgs = torch.randn((n_imgs, img_channels, img_size, img_size), device=DEVICE)
+    # Create Random Sample 
+    # imgs = torch.randn((n_imgs, img_channels, img_size, img_size), device=DEVICE)
+
+    # Encode actual sample (note [0] is 1st sample, then [0] is for imgs values)
+    imgs, noise = forward_diffusion_sample(data_train.dataset[0][0].unsqueeze(0).to(DEVICE), max_t-1)
+    for i in range(1, n_imgs):
+        img, noise = forward_diffusion_sample(data_train.dataset[i][0].unsqueeze(0).to(DEVICE), max_t-1)
+        imgs = torch.cat((imgs, img), dim=0)
 
     stepsize = int(max_t/show_n_steps)
     fig = plt.figure()
@@ -313,11 +319,11 @@ def train(model, learning_rate, epochs, batch_size, data_train, data_valid, max_
                 avg_valid_loss = running_batch_valid_loss / len(data_valid)
                 log_valid_loss.append(avg_valid_loss)
                 
-                print(f"Epoch {epoch} | step {step:03d} | Train Loss: {avg_train_loss} | Valid Loss: {avg_valid_loss}")
+                print(f"Epoch {epoch:03d} | step {step:03d} | Train Loss: {avg_train_loss:.4f} | Valid Loss: {avg_valid_loss:.4f}")
                 if epoch % 5 == 0:
-                    sample_plot_model_image(sample_timestep, max_t, 5, 10, epoch, img_channels, img_size, dataset, diffusion_name, show_plots)
+                    sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_train, max_t, 5, 10, epoch, dataset, diffusion_name, show_plots)
     
-    sample_plot_model_image(sample_timestep, max_t, 5, 10, epoch, img_channels, img_size, dataset, diffusion_name, show_plots)
+    sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_train, max_t, 5, 10, epoch, dataset, diffusion_name, show_plots)
     plot_learning_curve(log_train_loss, log_valid_loss, dataset, diffusion_name, show_plots)
 
     # save the model (only model parameters)

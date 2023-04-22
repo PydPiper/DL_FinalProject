@@ -96,7 +96,7 @@ if __name__ == '__main__':
     # Inputs
     # -------------------------------------------------------------------------------------------------------
     DIFFUSION_NAME = 'noise'
-    DATASET = 'MNIST' # MNIST CIFAR10 CelebA
+    DATASET = 'CIFAR10' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
     SHOW_PLOTS = False
