@@ -137,7 +137,12 @@ root_cifar10/*
 root_cifar10_test/*
 root_mnist/*
 root_mnist_test/*
+/original/
+/robustness-master/
+
 *.model
 resources/*
 resources/original/*
 *.png
+
+.idea/*
