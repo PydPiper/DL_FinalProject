@@ -6,8 +6,6 @@ from matplotlib import pyplot as plt
 import os
 import numpy as np
 import random
-import skimage as sk
-from .corrupt_image import *
 
 # -------------------------------------------------------------------------------------------------------
 # Setup
@@ -48,19 +46,6 @@ def img_tensor_to_pil(img):
     return transforms(img)
 
 
-def img_tensors_to_pil(imgs):
-    if len(imgs.shape) > 4:
-        raise ValueError(f'Input img.shape={imgs.shape}, img.shape must be [n, channel, height, width]')
-    transforms = torchvision.transforms.Compose([
-        torchvision.transforms.Lambda(lambda data: data.permute(0, 2, 3, 1)), # swap from (channel, height, width) to (height, width, channel), note this is needed when using plt.imshow
-        torchvision.transforms.Lambda(lambda data: (data / torch.abs(data).max() + 1) / 2), # recover all -1 to 0 values
-        torchvision.transforms.Lambda(lambda data: (data.to('cpu') * 255.).numpy().astype(np.uint64)), # bring it back from 0-1 to RGB 0-255 scale
-        # torchvision.transforms.ToPILImage(), # note this is only needed when using plt.imshow
-    ])
-    return transforms(imgs)
-
-
-
 def load_data(dataset='MNIST'):
     transforms = torchvision.transforms.Compose([
         torchvision.transforms.Resize((IMG_SIZE, IMG_SIZE)),
@@ -89,7 +74,7 @@ def beta_scheduler(steps=300, start=0.0001, end=0.02, beta_type='linear'):
         raise ValueError(f'Incorrect beta scheduler type={beta_type}')
     return rv
 
-def forward_diffusion_sample(x_0, t, corruption='gaussian'):
+def forward_diffusion_sample(x_0, t):
     """takes an original img and returns a noised version of it at any given time step "t"
 
     :param x_0: _description_
@@ -110,55 +95,26 @@ def forward_diffusion_sample(x_0, t, corruption='gaussian'):
     # rand_like is nothing special just a normal distribution thats the same size as the input
     noise = torch.randn_like(x_0)
     # mean + variance
-    corrupt_imgs = SQRT_ALPHA_BAR[t] * x_0 + SQRT_ONE_MINUS_ALPHA_BAR[t] * noise
-    return corrupt_imgs, noise
-
-
-def fwd_dif_impulse_pil(imgs):
-    # assume a vector of images are coming in with [num_imgs, height, width, ch]
-    c_range = [.03, .06, .09, 0.17, 0.27]
-    c = 0.17
-    for i, img in enumerate(imgs):
-        x = sk.util.random_noise(np.array(img) / 255., mode='s&p', amount=c)
-        imgs[i] = np.clip(x, 0, 1) * 255
-
-    return imgs
+    return SQRT_ALPHA_BAR[t] * x_0 + SQRT_ONE_MINUS_ALPHA_BAR[t] * noise, noise
 
 def simluate_forward_diffusion(dataloader, n_imgs=1, show_n_steps=5):
-    noise_model = "gaussian"
+
     iter_dataloader = iter(dataloader)
     # key 0 means that you are pulling out the x values (ie. imgs), key 1 would be the ground truth values "y"
     imgs = next(iter_dataloader)[0][:n_imgs]
+
     stepsize = int(T/show_n_steps)
     plt.figure()
-    if noise_model == "gaussian":
-        for col_i, t in enumerate(range(0, T, stepsize)):
-            # NOTE: calling next() returns a [tensor(x), tensor(y)]
-            # where x.shape = [batch size, channel, height, width]
-            #       y.shape = [batch size]
-            imgs, noises = forward_diffusion_sample(imgs, t)
-            for row_i, img in enumerate(imgs):
-                img = img_tensor_to_pil(img)
-                ax = plt.subplot(n_imgs, show_n_steps, row_i*show_n_steps + col_i + 1)
-                ax.set_axis_off()
-                plt.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
-    else:
-        # try with an impulse noise corruption as a test
-        # todo - make modular
-        # convert images from [n, ch, height, width] tensor to PIL [n, height, width, ch]
-        imgs = img_tensors_to_pil(imgs)
-        for col_i, t in enumerate(range(0, T, stepsize)):
-            # NOTE: calling next() returns a [tensor(x), tensor(y)]
-            # where x.shape = [batch size, channel, height, width]
-            #       y.shape = [batch size]
-            imgs = fwd_dif_impulse_pil(imgs)
-            for row_i, img in enumerate(imgs):
-                # img = img_tensor_to_pil(img)
-                ax = plt.subplot(n_imgs, show_n_steps, row_i*show_n_steps + col_i + 1)
-                ax.set_axis_off()
-                plt.imshow(img, cmap='gray')
-
-
+    for col_i, t in enumerate(range(0, T, stepsize)):
+        # NOTE: calling next() returns a [tensor(x), tensor(y)]
+        # where x.shape = [batch size, channel, height, width]
+        #       y.shape = [batch size]
+        imgs, noises = forward_diffusion_sample(imgs, t)
+        for row_i, img in enumerate(imgs):
+            img = img_tensor_to_pil(img)
+            ax = plt.subplot(n_imgs, show_n_steps, row_i*show_n_steps + col_i + 1)
+            ax.set_axis_off()
+            plt.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
     plt.show()
     plt.close()
 
