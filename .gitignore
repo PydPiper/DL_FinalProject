@@ -137,3 +137,7 @@ root_cifar10/*
 root_cifar10_test/*
 root_mnist/*
 root_mnist_test/*
+*.model
+resources/*
+resources/original/*
+*.png
