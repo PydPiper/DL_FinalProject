@@ -96,7 +96,7 @@ if __name__ == '__main__':
     # Inputs
     # -------------------------------------------------------------------------------------------------------
     DIFFUSION_NAME = 'noise'
-    DATASET = 'CIFAR10' # MNIST CIFAR10 CelebA
+    DATASET = 'CelebA' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
     SHOW_PLOTS = False
@@ -134,8 +134,8 @@ if __name__ == '__main__':
     os.makedirs(f'../results/{DATASET}/{DIFFUSION_NAME}', exist_ok=True)
 
     data_train, data_valid = utils.load_data(DATASET, IMG_SIZE, BATCH_SIZE)
-    # NOTE: when the img is rgb the shape is [samples, height, width, channels] else its [samples, height, width]
-    IMG_CHANNELS = data_train.dataset.data.shape[-1] if len(data_train.dataset.data.shape) == 4 else 1
+    # NOTE: [0] for 0th sample, this returns the x,y as a tuple, we want the img only so again [0], the shape will be [channel, height, width]
+    IMG_CHANNELS = data_train.dataset[0][0].shape[0]
     
     # show sample imgs from dataset
     utils.visualize_input_imgs(data_train, 3, DATASET, DIFFUSION_NAME, SHOW_PLOTS)

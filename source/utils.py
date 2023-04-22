@@ -53,14 +53,31 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_trai
     # Create Random Sample 
     # imgs = torch.randn((n_imgs, img_channels, img_size, img_size), device=DEVICE)
 
+    # get imgs out of dataset to do simulated fwd pass
+    imgs = data_train.dataset[0][0].unsqueeze(0).to(DEVICE)
+    for i in range(1, n_imgs):
+        img = data_train.dataset[i][0].unsqueeze(0).to(DEVICE)
+        imgs = torch.cat((imgs, img), dim=0)
+
+    stepsize = int(max_t/show_n_steps)
+    fig = plt.figure()
+    col_i = 0
+
+    for col_i, t in enumerate(range(0, max_t, stepsize)):
+        imgs, noises = forward_diffusion_sample(imgs, t)
+        for row_i, img in enumerate(imgs):
+            img = img_tensor_to_pil(img)
+            ax = fig.add_subplot(n_imgs, show_n_steps*2, row_i*show_n_steps*2 + col_i + 1)
+            ax.set_axis_off()
+            ax.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
+
     # Encode actual sample (note [0] is 1st sample, then [0] is for imgs values)
     imgs, noise = forward_diffusion_sample(data_train.dataset[0][0].unsqueeze(0).to(DEVICE), max_t-1)
     for i in range(1, n_imgs):
         img, noise = forward_diffusion_sample(data_train.dataset[i][0].unsqueeze(0).to(DEVICE), max_t-1)
         imgs = torch.cat((imgs, img), dim=0)
 
-    stepsize = int(max_t/show_n_steps)
-    fig = plt.figure()
+
     col_i = 0
     for t in range(0, max_t)[::-1]:
         t = torch.full((1,), t, device=DEVICE, dtype=torch.long)
@@ -68,7 +85,7 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_trai
         if t % stepsize == 0:
             for row_i, img in enumerate(imgs):
                 img = img_tensor_to_pil(img)
-                ax = fig.add_subplot(n_imgs, show_n_steps, row_i*show_n_steps + col_i + 1)
+                ax = fig.add_subplot(n_imgs, show_n_steps*2, show_n_steps + row_i*show_n_steps*2 + col_i + 1)
                 ax.set_axis_off()
                 ax.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
             col_i += 1
@@ -104,12 +121,21 @@ def load_data(dataset='MNIST', img_size=32, batch_size=128):
         torchvision.transforms.ToTensor(), # scales from RGB 0-255 to 0-1
         torchvision.transforms.Lambda(lambda data: (data*2) - 1) # shift data to be -1 to 1
     ])
-    data_train = getattr(torchvision.datasets, dataset)('../data/', download=True, train=True, transform=transforms)
-    # data_train = torch.utils.data.Subset(data_train, torch.arange(0,10e3))
-    data_train = torch.utils.data.DataLoader(data_train, batch_size=batch_size, shuffle=True, drop_last=True)
+    if dataset != 'CelebA':
+        data_train = getattr(torchvision.datasets, dataset)('../data/', download=True, train=True, transform=transforms)
+        # data_train = torch.utils.data.Subset(data_train, torch.arange(0,10e3))
+        data_train = torch.utils.data.DataLoader(data_train, batch_size=batch_size, shuffle=True, drop_last=True)
 
-    data_valid = getattr(torchvision.datasets, dataset)('../data/', download=True, train=False, transform=transforms)
-    data_valid = torch.utils.data.DataLoader(data_valid, batch_size=batch_size, shuffle=True, drop_last=True)
+        data_valid = getattr(torchvision.datasets, dataset)('../data/', download=True, train=False, transform=transforms)
+        data_valid = torch.utils.data.DataLoader(data_valid, batch_size=batch_size, shuffle=True, drop_last=True)
+    else:
+        # NOTE: for some reason torch CalebA doesnt take "train" as an arg instead its uses split
+        data_train = getattr(torchvision.datasets, dataset)('../data/', download=True, split='train', transform=transforms)
+        # data_train = torch.utils.data.Subset(data_train, torch.arange(0,10e3))
+        data_train = torch.utils.data.DataLoader(data_train, batch_size=batch_size, shuffle=True, drop_last=True)
+
+        data_valid = getattr(torchvision.datasets, dataset)('../data/', download=True, split='valid', transform=transforms)
+        data_valid = torch.utils.data.DataLoader(data_valid, batch_size=batch_size, shuffle=True, drop_last=True)
     return data_train, data_valid
 
 # -------------------------------------------------------------------------------------------------------
