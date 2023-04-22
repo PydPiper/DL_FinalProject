@@ -13,7 +13,7 @@ from .corrupt_image import *
 # Setup
 # -------------------------------------------------------------------------------------------------------
 os.chdir(os.path.dirname(__file__))
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 # -------------------------------------------------------------------------------------------------------
@@ -68,10 +68,12 @@ def load_data(dataset='MNIST'):
         torchvision.transforms.Lambda(lambda data: (data*2) - 1) # shift data to be -1 to 1
     ])
     data_train = getattr(torchvision.datasets, dataset)('../data/', download=True, train=True, transform=transforms)
-    data_test = getattr(torchvision.datasets, dataset)('../data/', download=True, transform=transforms)
-    data = torch.utils.data.ConcatDataset((data_train, data_test))
-    dataloader = torch.utils.data.DataLoader(data, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
-    return dataloader
+    # data_train = torch.utils.data.Subset(data_train, torch.arange(0,10e3))
+    data_train = torch.utils.data.DataLoader(data_train, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+
+    data_test = getattr(torchvision.datasets, dataset)('../data/', download=True, train=False, transform=transforms)
+    data_test = torch.utils.data.DataLoader(data_test, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+    return data_train, data_test
 
 
 # -------------------------------------------------------------------------------------------------------
@@ -82,7 +84,7 @@ def beta_scheduler(steps=300, start=0.0001, end=0.02, beta_type='linear'):
     # note step=1e-4 and end=0.2 is from the original DDPM paper: https://arxiv.org/abs/2102.09672
     # there is also cosine, sigmoid and other types to implement
     if beta_type == 'linear':
-        rv = torch.linspace(start, end, steps).to(device)
+        rv = torch.linspace(start, end, steps).to(DEVICE)
     else:
         raise ValueError(f'Incorrect beta scheduler type={beta_type}')
     return rv
@@ -104,7 +106,7 @@ def forward_diffusion_sample(x_0, t, corruption='gaussian'):
 
     # using "reparameterization" we can calcluate any noised sample without iterating over the previous n-samples
     # x_t = sqrt(alpha_bar)*x_0 + sqrt(1-alpha_bar)*noise
-    x_0 = x_0.to(device)
+    x_0 = x_0.to(DEVICE)
     # rand_like is nothing special just a normal distribution thats the same size as the input
     noise = torch.randn_like(x_0)
     # mean + variance
@@ -125,6 +127,7 @@ def fwd_dif_impulse_pil(imgs):
 def simluate_forward_diffusion(dataloader, n_imgs=1, show_n_steps=5):
     noise_model = "gaussian"
     iter_dataloader = iter(dataloader)
+    # key 0 means that you are pulling out the x values (ie. imgs), key 1 would be the ground truth values "y"
     imgs = next(iter_dataloader)[0][:n_imgs]
     stepsize = int(T/show_n_steps)
     plt.figure()
@@ -169,28 +172,28 @@ class Block(nn.Module):
         self.linear =  nn.Linear(dim_time_emb, dim_out_ch)
         if up_sample:
             self.conv1 = nn.Conv2d(2*dim_in_ch, dim_out_ch, kernel_size=3, padding=1)
-            self.transform = nn.ConvTranspose2d(dim_out_ch, dim_out_ch, kernel_size=4, stride=2, padding=1)
+            self.transform = nn.ConvTranspose2d(dim_out_ch, dim_out_ch, kernel_size=5)
         else:
             self.conv1 = nn.Conv2d(dim_in_ch, dim_out_ch, kernel_size=3, padding=1)
-            self.transform = nn.Conv2d(dim_out_ch, dim_out_ch, kernel_size=4, stride=2, padding=1)
-        self.conv2 = nn.Conv2d(dim_out_ch, dim_out_ch, kernel_size=3, padding=1)
-        self.norm1 = nn.BatchNorm2d(dim_out_ch)
-        self.norm2 = nn.BatchNorm2d(dim_out_ch)
+            self.transform = nn.Conv2d(dim_out_ch, dim_out_ch, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(dim_out_ch, dim_out_ch, kernel_size=3)
+        self.norm = nn.BatchNorm2d(dim_out_ch)
         self.relu  = nn.ReLU()
 
     def forward(self, x, t):
         # First conv
-        h = self.norm1(self.relu(self.conv1(x)))
+        h = self.norm(self.relu(self.conv1(x)))
         # Time embedding
         time_emb = self.relu(self.linear(t))
-        # Extend last 2 dimensions
-        time_emb = time_emb[(..., ) + (None, ) * 2]
+        # Extend last 2 dimensions so we can add h + time_emb
+        time_emb = time_emb.reshape(time_emb.shape + (1,1))
         # Add time channel
         h = h + time_emb
         # Second Conv
-        h = self.norm2(self.relu(self.conv2(h)))
+        h = self.norm(self.relu(self.conv2(h)))
         # Down or Upsample
-        return self.transform(h)
+        h = self.transform(h)
+        return h
 
 
 class SinusoidalPositionEmbeddings(nn.Module):
@@ -199,25 +202,27 @@ class SinusoidalPositionEmbeddings(nn.Module):
         self.dim = dim
 
     def forward(self, time):
-        device = time.device
         half_dim = self.dim // 2
         embeddings = np.log(10000) / (half_dim - 1)
-        embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
+        embeddings = torch.exp(torch.arange(half_dim, device=DEVICE) * -embeddings)
         embeddings = time[:, None] * embeddings[None, :]
         embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
-        # TODO: Double check the ordering here
         return embeddings
 
 
-class SimpleUnet(nn.Module):
+class Unet(nn.Module):
     """
     A simplified variant of the Unet architecture.
     """
     def __init__(self):
         super().__init__()
         image_channels = IMG_CHANNELS
-        down_channels = (64, 128, 256, 512, 1024)
-        up_channels = (1024, 512, 256, 128, 64)
+        initial_projection_kernel = 3 # 7
+        initial_projection_padding = 1 # 3
+        starting_channels = 64
+        self.n_channels = n_channels = 5
+        down_channels = [starting_channels*multi for multi in [2**i for i in range(n_channels)]]
+        up_channels = down_channels[::-1]
         out_dim = 1 
         time_emb_dim = 32
 
@@ -229,18 +234,21 @@ class SimpleUnet(nn.Module):
             )
         
         # Initial projection
-        self.conv0 = nn.Conv2d(image_channels, down_channels[0], kernel_size=3, padding=1)
+        self.conv0 = nn.Conv2d(image_channels, down_channels[0], kernel_size=initial_projection_kernel, padding=initial_projection_padding)
 
         # Downsample
-        self.downs = nn.ModuleList([Block(down_channels[i], down_channels[i+1], \
-                                    time_emb_dim) \
-                    for i in range(len(down_channels)-1)])
-        # Upsample
-        self.ups = nn.ModuleList([Block(up_channels[i], up_channels[i+1], \
-                                        time_emb_dim, up_sample=True) \
-                    for i in range(len(up_channels)-1)])
+        # note this is index to n-1 because we are keying fwd 1 for input_dim, output_dim
+        self.downs = nn.ModuleList([])
+        for i in range(len(down_channels)-1):
+            self.downs.append(Block(down_channels[i], down_channels[i+1], time_emb_dim))
+        self.pool = nn.MaxPool2d(2, stride=2)
 
-        self.output = nn.Conv2d(up_channels[-1], 3, out_dim)
+        # Upsample
+        self.ups = nn.ModuleList([])
+        for i in range(len(up_channels)-1):
+            self.ups.append(Block(up_channels[i], up_channels[i+1], time_emb_dim, up_sample=True))
+
+        self.output = nn.Conv2d(up_channels[-1], image_channels, out_dim)
 
     def forward(self, x, timestep):
         # Embedd time
@@ -249,9 +257,12 @@ class SimpleUnet(nn.Module):
         x = self.conv0(x)
         # Unet
         residual_inputs = []
-        for down in self.downs:
+        for i, down in enumerate(self.downs):
             x = down(x, t)
             residual_inputs.append(x)
+            # if i != self.n_channels:
+            #     x = self.pool(x)
+
         for up in self.ups:
             residual_x = residual_inputs.pop()
             # Add residual x as additional channels
@@ -284,23 +295,26 @@ def sample_timestep(x, t):
         return model_mean + torch.sqrt(POSTERIOR_VARIANCE[t]) * noise 
 
 @torch.no_grad()
-def sample_plot_image():
+def sample_plot_image(n_imgs=1, show_n_steps=10):
     # Sample noise
-    img = torch.randn((1, 3, IMG_SIZE, IMG_SIZE), device=device)
-    plt.figure(figsize=(15,15))
-    plt.axis('off')
-    num_images = 10
-    stepsize = int(T/num_images)
+    imgs = torch.randn((n_imgs, IMG_CHANNELS, IMG_SIZE, IMG_SIZE), device=DEVICE)
 
-    for i in range(0,T)[::-1]:
-        t = torch.full((1,), i, device=device, dtype=torch.long)
-        img = sample_timestep(img, t)
-        if i % stepsize == 0:
-            plt.subplot(1, num_images, i/stepsize+1)
-            img = img_tensor_to_pil(img.detach().cpu())
-            plt.imshow(img)
-    plt.show()    
-
+    stepsize = int(T/show_n_steps)
+    plt.figure()
+    col_i = 0
+    # NOTE: we have to reverse the img from t=T backwards to 0, and keep on calling the model to revert the noise 1 time step at a time
+    for t in range(0, T)[::-1]:
+        t = torch.full((1,), t, device=DEVICE, dtype=torch.long)
+        imgs = sample_timestep(imgs, t)
+        if t % stepsize == 0:
+            for row_i, img in enumerate(imgs):
+                img = img_tensor_to_pil(img)
+                ax = plt.subplot(n_imgs, show_n_steps, row_i*show_n_steps + col_i + 1)
+                ax.set_axis_off()
+                plt.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
+            col_i += 1
+    plt.show()
+    plt.close()
 
 
 # -------------------------------------------------------------------------------------------------------
@@ -314,7 +328,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DATASET = 'CIFAR10' # MNIST CIFAR10 CelebA
+    DATASET = 'MNIST' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
 
     # -------------------------------------------------------------------------------------------------------
@@ -335,7 +349,7 @@ if __name__ == '__main__':
     # alpha_bar is the product_sum of alpha (ie: alphas[0], alphas[0]*alphas[1], alphas[0]*alphas[1]*alphas[2],...)
     ALPHA_BAR = torch.cumprod(ALPHA, axis=0)
     # alpha_bar_prev is simply just the start from 1 to alpha_bar[-1]
-    ALPHA_BAR_PREV = torch.cat((torch.tensor([1.]).to(device), ALPHA_BAR[:-1]))
+    ALPHA_BAR_PREV = torch.cat((torch.tensor([1.]).to(DEVICE), ALPHA_BAR[:-1]))
     # used in x_t calc
     SQRT_ALPHA_BAR = torch.sqrt(ALPHA_BAR)
     SQRT_ONE_MINUS_ALPHA_BAR = torch.sqrt(1. - ALPHA_BAR)
@@ -346,29 +360,29 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Start of Process
     # -------------------------------------------------------------------------------------------------------
-    # uncomment to see the input imgs
 
-    dataloader = load_data(DATASET)
+    data_train, data_test = load_data(DATASET)
     # NOTE: when the img is rgb the shape is [samples, height, width, channels] else its [samples, height, width]
-    IMG_CHANNELS = dataloader.dataset.datasets[0].data.shape[-1] if len(dataloader.dataset.datasets[0].data.shape) == 4 else 1
-    visualize_input_imgs(dataloader, 3)
+    IMG_CHANNELS = data_train.dataset.data.shape[-1] if len(data_train.dataset.data.shape) == 4 else 1
+    # uncomment to see the input imgs
+    visualize_input_imgs(data_train, 3)
 
-    simluate_forward_diffusion(dataloader, n_imgs=5, show_n_steps=10)
+    simluate_forward_diffusion(data_train, n_imgs=5, show_n_steps=10)
 
-    # model = SimpleUnet()
-    # model.to(device)
-    # optimizer = Adam(model.parameters(), lr=0.001)
-    # epochs = 100 # Try more!
+    model = Unet()
+    model.to(DEVICE)
+    optimizer = Adam(model.parameters(), lr=0.001)
+    epochs = 100 
 
-    # for epoch in range(epochs):
-    #     for step, batch in enumerate(dataloader):
-    #         optimizer.zero_grad()
+    for epoch in range(epochs):
+        for step, batch in enumerate(data_train):
+            x, y = batch
+            optimizer.zero_grad()
 
-    #         t = torch.randint(0, T, (BATCH_SIZE,), device=device).long()
-    #         loss = get_loss(model, batch[0], t)
-    #         loss.backward()
-    #         optimizer.step()
-
-    #         if epoch % 5 == 0 and step == 0:
-    #             print(f"Epoch {epoch} | step {step:03d} Loss: {loss.item()} ")
-    #             sample_plot_image()
+            t = torch.randint(0, T, (BATCH_SIZE,), device=DEVICE).long()
+            loss = get_loss(model, x, t)
+            loss.backward()
+            optimizer.step()
+            if step == 0:
+                print(f"Epoch {epoch} | step {step:03d} Loss: {loss.item()} ")
+                sample_plot_image()
