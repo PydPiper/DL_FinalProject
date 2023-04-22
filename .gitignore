@@ -144,3 +144,5 @@ root_mnist_test/*
 resources/*
 resources/original/*
 *.png
+
+.idea/*
