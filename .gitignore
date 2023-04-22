@@ -139,6 +139,7 @@ root_mnist/*
 root_mnist_test/*
 /original/
 /robustness-master/
+
 *.model
 resources/*
 resources/original/*
