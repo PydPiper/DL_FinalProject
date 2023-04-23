@@ -1,0 +1,7 @@
+numpy
+matplotlib
+torch==2.0.0+cu118
+torchaudio==2.0.1+cu118
+torchgeometry==0.1.2
+torchvision==0.15.1+cu118
+scikit-image
