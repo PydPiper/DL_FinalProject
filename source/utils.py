@@ -12,6 +12,7 @@ from torch import nn
 from torch.optim import Adam
 from matplotlib import pyplot as plt
 import numpy as np
+from skimage.metrics import structural_similarity as ssim
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -71,6 +72,8 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_trai
             ax.set_axis_off()
             ax.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
 
+    img_start = imgs[0]
+
     # Encode actual sample (note [0] is 1st sample, then [0] is for imgs values)
     imgs, noise = forward_diffusion_sample(data_train.dataset[0][0].unsqueeze(0).to(DEVICE), max_t-1)
     for i in range(1, n_imgs):
@@ -89,6 +92,17 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_trai
                 ax.set_axis_off()
                 ax.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
             col_i += 1
+
+    img_end = imgs[0]
+
+    rmse = calc_error_rmse(img_start, img_end)
+    # TODO: finish these
+    # fid = calc_error_fid(img_start, img_end)
+    # ssim = calc_error_ssim(img_start, img_end)
+    fid = 0
+    ssim = 0
+    print(f'rsme: {rmse:4f} | fid: {fid:4f}, ssim: {ssim:4f}')
+
     fig.savefig(f'../results/{dataset}/{diffusion_name}/diffussion_{epoch}.png')
     if show_plots:
         fig.show()
@@ -356,3 +370,53 @@ def train(model, learning_rate, epochs, batch_size, data_train, data_valid, max_
     torch.save(model.state_dict(), saved_model_filename)
     
     return model
+
+
+def calc_error_rmse(img1, img2):
+    """Calculate root mean squared error between 2 batches of imgs
+
+    :param img1: batch of img1 imgs
+    :type img1: array
+    :param img2: batch of img2 imgs
+    :type img2: array
+    :return: array of rmse
+    :rtype: array
+    """
+    return torch.sqrt(torch.mean((img1 - img2)**2))
+
+def calc_error_fid(img1, img2):
+
+    # torch only lets you compute 2d cov, so need to reshape (channel, height, width) to (pixels, channels)
+    img1 = img1.to('cpu').numpy().reshape((img1.shape[0], img1.shape[1]*img1.shape[2]))
+    img2 = img2.to('cpu').numpy().reshape((img2.shape[0], img2.shape[1]*img2.shape[2]))
+
+    # mean (across channels) and covariance
+    mu1, sigma1 = img1.mean(axis=0), np.cov(img1, rowvar=False)
+    mu2, sigma2 = img2.mean(axis=0), np.cov(img2, rowvar=False)
+    # sum squared difference between means
+    sum_sqrd_diff = ((mu1-mu2)**2).sum()
+    # sqrt of similarity between the 2 covariance
+    cov_mean = np.sqrt(sigma1.dot(sigma2))
+    # correct imaginary numbers
+    if np.iscomplexobj(cov_mean):
+        cov_mean = cov_mean.real
+    fid = sum_sqrd_diff + np.trace(sigma1 + sigma2 - 2.0 * cov_mean)
+    return fid
+
+def calc_error_ssim(img1, img2):
+    """Calcuate Structural Similarity Index Measure (SSIM) is the perceived quality of digital pictures
+
+    https://scikit-image.org/docs/stable/api/skimage.metrics.html#skimage.metrics.structural_similarity
+    https://scikit-image.org/docs/stable/auto_examples/transform/plot_ssim.html
+
+    :param img1: _description_
+    :type img1: _type_
+    :param img2: _description_
+    :type img2: _type_
+    """
+    
+    img1 = img1.to('cpu').numpy()
+    img2 = img2.to('cpu').numpy()
+
+    rv = ssim(img1, img2, channel_axis=0, data_range=1)
+    return rv

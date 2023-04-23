@@ -55,14 +55,29 @@ def forward_diffusion_sample(x_0, t):
     # t can come in for n_batch size, need to reshape to multiply
     if not isinstance(t, int):
         t = t.reshape((t.shape[0],1,1,1))
+    else:
+        t = torch.full(size=(x_0.shape[0],1,1,1), fill_value=t)
 
     # using "reparameterization" we can calcluate any noised sample without iterating over the previous n-samples
     # x_t = sqrt(alpha_bar)*x_0 + sqrt(1-alpha_bar)*noise
     x_0 = x_0.to(DEVICE)
     # rand_like is nothing special just a normal distribution thats the same size as the input
-    noise = torch.randn_like(x_0)
+    batch, channel, height, width = x_0.shape
+    percent_mask = t / T
+    i_count_to_mask = (torch.floor((height * width) * percent_mask)).int()
+    noised_x = x_0.clone().detach()
+    noised_x = noised_x.reshape((batch, channel, height * width))
+    noise = torch.zeros_like(noised_x)
+
+    for i in range(batch):
+        noised_x[i,:,:i_count_to_mask[i]] = 1
+        # noise[i,:,:i_count_to_mask[i]] = 1
+
+    noised_x = noised_x.reshape((batch, channel, height, width))
+    # noise = noise.reshape((batch, channel, height, width))
+    noise = noised_x - x_0
     # mean + variance
-    return SQRT_ALPHA_BAR[t] * x_0 + SQRT_ONE_MINUS_ALPHA_BAR[t] * noise, noise
+    return noised_x, noise
 
 
 @torch.no_grad()
@@ -74,13 +89,15 @@ def sample_timestep(x, t):
     """
     
     # Call model (current image - noise prediction)
-    model_mean = SQRT_RECIP_ALPHA[t] * (x - BETA[t] * model(x, t) / SQRT_ONE_MINUS_ALPHA_BAR[t])
-    
-    if t == 0:
-        return model_mean
-    else:
-        noise = torch.randn_like(x)
-        return model_mean + torch.sqrt(POSTERIOR_VARIANCE[t]) * noise 
+    pred_noise = model(x, t)
+    batch, channel, height, width = x.shape
+    pred_noise = pred_noise.reshape((batch, channel, height * width))
+    percent_mask = t / T
+    i_count_to_mask = (torch.floor((height * width) * percent_mask)).int()
+    pred_noise[:,:,:i_count_to_mask] = 0
+    pred_noise = pred_noise.reshape((batch, channel, height, width))
+    x_new = x - pred_noise
+    return x_new    
 
 
 
@@ -95,7 +112,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DIFFUSION_NAME = 'noise'
+    DIFFUSION_NAME = 'mask'
     DATASET = 'MNIST' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
