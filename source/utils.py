@@ -55,24 +55,23 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_trai
     # imgs = torch.randn((n_imgs, img_channels, img_size, img_size), device=DEVICE)
 
     # get imgs out of dataset to do simulated fwd pass
-    imgs = data_train.dataset[0][0].unsqueeze(0).to(DEVICE)
+    imgs_0 = data_train.dataset[0][0].unsqueeze(0).to(DEVICE)
     for i in range(1, n_imgs):
         img = data_train.dataset[i][0].unsqueeze(0).to(DEVICE)
-        imgs = torch.cat((imgs, img), dim=0)
+        imgs_0 = torch.cat((imgs_0, img), dim=0)
 
     stepsize = int(max_t/show_n_steps)
     fig = plt.figure()
     col_i = 0
 
     for col_i, t in enumerate(range(0, max_t, stepsize)):
-        imgs, noises = forward_diffusion_sample(imgs, t)
+        imgs, noises = forward_diffusion_sample(imgs_0, t)
         for row_i, img in enumerate(imgs):
             img = img_tensor_to_pil(img)
             ax = fig.add_subplot(n_imgs, show_n_steps*2, row_i*show_n_steps*2 + col_i + 1)
             ax.set_axis_off()
             ax.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
 
-    img_start = imgs[0]
 
     # Encode actual sample (note [0] is 1st sample, then [0] is for imgs values)
     imgs, noise = forward_diffusion_sample(data_train.dataset[0][0].unsqueeze(0).to(DEVICE), max_t-1)
@@ -93,9 +92,8 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_trai
                 ax.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
             col_i += 1
 
-    img_end = imgs[0]
 
-    rmse = calc_error_rmse(img_start, img_end)
+    rmse = calc_error_rmse(imgs_0[0], imgs[0])
     # TODO: finish these
     # fid = calc_error_fid(img_start, img_end)
     # ssim = calc_error_ssim(img_start, img_end)
@@ -103,7 +101,7 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_trai
     ssim = 0
     print(f'rsme: {rmse:4f} | fid: {fid:4f}, ssim: {ssim:4f}')
 
-    fig.savefig(f'../results/{dataset}/{diffusion_name}/diffussion_{epoch}.png')
+    fig.savefig(f'../results/{dataset}/{diffusion_name}/{diffusion_name}_{epoch}.png')
     if show_plots:
         fig.show()
     plt.close()
@@ -385,6 +383,15 @@ def calc_error_rmse(img1, img2):
     return torch.sqrt(torch.mean((img1 - img2)**2))
 
 def calc_error_fid(img1, img2):
+    """https://machinelearningmastery.com/how-to-implement-the-frechet-inception-distance-fid-from-scratch/
+
+    :param img1: _description_
+    :type img1: _type_
+    :param img2: _description_
+    :type img2: _type_
+    :return: _description_
+    :rtype: _type_
+    """
 
     # torch only lets you compute 2d cov, so need to reshape (channel, height, width) to (pixels, channels)
     img1 = img1.to('cpu').numpy().reshape((img1.shape[0], img1.shape[1]*img1.shape[2]))
