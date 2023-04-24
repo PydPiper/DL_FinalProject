@@ -12,11 +12,11 @@ from torch import nn
 from torch.optim import Adam
 from matplotlib import pyplot as plt
 import numpy as np
-import skimage as sk
+
 # -------------------------------------------------------------------------------------------------------
 # Import source modules
 # -------------------------------------------------------------------------------------------------------
-import utils
+import utils_cold
 
 # -------------------------------------------------------------------------------------------------------
 # Setup
@@ -43,39 +43,24 @@ def beta_scheduler(steps=300, start=0.0001, end=0.02, beta_type='linear'):
 
 def forward_diffusion_sample(x_0, t):
     """takes an original img and returns a noised version of it at any given time step "t"
-    :param x_0: sized [n, ch, height, width]
-    :type x_0: PyTorch Tensor
+    :param x_0: _description_
+    :type x_0: _type_
     :param t: _description_
-    :type t: int or PyTorch Tensor
+    :type t: _type_
     :return: _description_
     :rtype: _type_
     """
-    x_0 = x_0.to(DEVICE)
-    # t can come in for n_batch size, need to reshape to multiply
-    if isinstance(t, int):
-        noise = np.ones(x_0.shape)
-        noise = torch.tensor(sk.util.random_noise(noise, mode='pepper', amount=INTENSITY_SCHEDULE[t].item(), seed=0)).to(DEVICE)
-        distorted_img = x_0*noise
-
-        # distorted_img = sk.util.random_noise(np.array(x_0.cpu()), mode='s&p', amount=INTENSITY_SCHEDULE[t].item(),
-        #                                      seed=0)
-
-    else:
-        noise = torch.empty(x_0.shape)
-        blank_arr = np.ones(x_0.shape)
-        for i, ts in enumerate(t):
-            noise[i] = torch.tensor(sk.util.random_noise(blank_arr[i], mode='pepper', amount=INTENSITY_SCHEDULE[ts].item(),
-                                                    seed=0))
-        noise = noise.to(DEVICE)
-        distorted_img = x_0 * noise
-
-    # determinate amount of noise applied to the image x_0 based at time t i.e. x_t = D(x_0, t) = x_0 * f(t)
-    # TODO - verify that this will actually work
-    # x_distorted = x_t + noise
-    # distorted_img = torch.tensor(distorted_img).to(DEVICE)
-    # noise = x_0 - distorted_img
-
-    return distorted_img, noise
+    n, c, h, w = x_0.shape
+    noise = torch.zeros_like(x_0)
+    for i in range(n):
+        for j in range(c):
+            if isinstance(t, int):
+                t_int = t
+            else:
+                t_int = t[i].item()
+            noise[i, j, :] = GAUSSIAN_MASK[t_int]
+    output = x_0*noise
+    return output.to(x_0.dtype).to(DEVICE), noise.to(x_0.dtype).to(DEVICE)
 
 
 @torch.no_grad()
@@ -85,23 +70,32 @@ def sample_timestep(x, t):
     the denoised image. 
     Applies noise to this image, if we are not in the last step yet.
     """
-    # TODO - THIS STEP IS REALLY QUITE HARD
-    # FIXME - Is this the restoration operator? Ask Viktor.
-    # https://github.com/bahjat-kawar/ddrm
-    # Call model (current image - noise prediction)
-    # calculate noise at time t
-    blank_arr = np.ones(x.shape)
-    noise = torch.tensor(sk.util.random_noise(blank_arr, mode='pepper', amount=INTENSITY_SCHEDULE[t].item(), seed=0)).to(
-        DEVICE)
-
-    model_mean = SQRT_RECIP_ALPHA[t] * (x - BETA[t] * model(x, t) / SQRT_ONE_MINUS_ALPHA_BAR[t])
-    
+    # REVISED FOR THE COLD DIFFUSION SAMPLING WHICH SHOULD BE BETTER WHEN SWITCHING TO DETERMINISTIC
+    method = "alg2_cold"
     if t == 0:
-        return model_mean
+        return x
     else:
-        noise = torch.randn_like(x)
-        output = model_mean + torch.sqrt(POSTERIOR_VARIANCE[t]) * noise
-        return output
+        n, c, h, w = x.shape
+        noise1 = torch.zeros_like(x)
+        noise2 = torch.zeros_like(x)
+        for i in range(n):
+            for j in range(c):
+                if isinstance(t, int):
+                    t_int = t
+                else:
+                    t_int = t.item()
+                noise1[i, j, :] = GAUSSIAN_MASK[t_int]
+                noise2[i, j, :] = GAUSSIAN_MASK[t_int-1]
+
+        # call the model to predict the image
+        # note that the loss function has been changed from the original diffusion process!
+        predicted_original_image = model(x, t)
+        output1 = predicted_original_image * noise1
+        output2 = predicted_original_image * noise2
+        if method == "naive":
+            return output2
+        else:
+            return x - output1 + output2
 
 
 
@@ -116,26 +110,25 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DIFFUSION_NAME = 'impulse'
+    DIFFUSION_NAME = 'gaussian_mask'
     DATASET = 'MNIST' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
     SHOW_PLOTS = False
-    
     # -------------------------------------------------------------------------------------------------------
     # Hyperparameter Tuning
     # -------------------------------------------------------------------------------------------------------
-    T = 300 # (for gaussian this is called beta time steps)
-    BATCH_SIZE = 128 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
-    LEARNING_RATE = 0.001
+    T = 50 # (for gaussian this is called beta time steps)
+    BATCH_SIZE = 64 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
+    LEARNING_RATE = 2e-5
     EPOCHS = 10
-    INTENSITY_SCHEDULE = beta_scheduler(steps=T, start=0.03, end=0.8, beta_type='linear')
+
     # -------------------------------------------------------------------------------------------------------
     # Diffusion Global Parameters
     # -------------------------------------------------------------------------------------------------------
     # Define beta schedule
     # NOTE: T is also the size of beta
-    BETA = beta_scheduler(steps=T)
+    BETA = beta_scheduler(steps=T, end=0.1)
     # NOTE: alpha.shape == beta.shape, but alpha is a slow decrease from 1 to 1-beta_end 
     ALPHA = 1. - BETA
     # alpha_bar is the product_sum of alpha (ie: alphas[0], alphas[0]*alphas[1], alphas[0]*alphas[1]*alphas[2],...)
@@ -155,15 +148,36 @@ if __name__ == '__main__':
     os.makedirs(f'../results/{DATASET}/{DIFFUSION_NAME}', exist_ok=True)
 
     data_train, data_valid = utils.load_data(DATASET, IMG_SIZE, BATCH_SIZE)
-    # NOTE: when the img is rgb the shape is [samples, height, width, channels] else its [samples, height, width]
-    IMG_CHANNELS = data_train.dataset.data.shape[-1] if len(data_train.dataset.data.shape) == 4 else 1
-    
+    # NOTE: [0] for 0th sample, this returns the x,y as a tuple, we want the img only so again [0], the shape will be [channel, height, width]
+    IMG_CHANNELS = data_train.dataset[0][0].shape[0]
+    # -------------------------------------------------------------------------------------------------------
+    # CREATE GAUSSIAN MASK
+    # -------------------------------------------------------------------------------------------------------
+    GAUSSIAN_MASK = torch.zeros((T, IMG_CHANNELS, IMG_SIZE, IMG_SIZE)).to(DEVICE)
+    variance = 1
+    for t in range(T):
+        for c in range(IMG_CHANNELS):
+            sigma = 1
+            x = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
+            y = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
+            y = y[:, None]
+            kernel = torch.exp(-(x ** 2 + y ** 2) / (2 * variance))
+            kernel = 1 - kernel / kernel.max()
+            if t == 0:
+                GAUSSIAN_MASK[t, c, :] = kernel
+            else:
+                GAUSSIAN_MASK[t, c, :] = kernel*GAUSSIAN_MASK[t-1, c, :]
+        variance += 0.1
+
     # show sample imgs from dataset
     utils.visualize_input_imgs(data_train, 3, DATASET, DIFFUSION_NAME, SHOW_PLOTS)
 
     # show what fwd diffusion looks like
     utils.simluate_forward_diffusion(data_train, forward_diffusion_sample, max_time=T, n_imgs=5, show_n_steps=10, 
                                      dataset=DATASET, diffusion_name=DIFFUSION_NAME, show_plots=SHOW_PLOTS)
+
+
+
 
     # run training
     model = utils.Unet(IMG_CHANNELS)
