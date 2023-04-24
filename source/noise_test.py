@@ -77,14 +77,18 @@ def sample_timestep(x, t):
     # the model is trained to predict what the noise is at that time step of a noisy image (ie. img_(t-1) = img_t + noise) 
     # so that here we can subtract out the noise to get to img_(t-1)
     
-    pred_noise = model(x, t)
-    model_mean = SQRT_RECIP_ALPHA[t] * (x - BETA[t] * pred_noise / SQRT_ONE_MINUS_ALPHA_BAR[t])
     
     if t == 0:
-        return model_mean
+        return x
     else:
+        predicted_noise = model(x, t)
+        predicted_original_image = x - predicted_noise 
         noise = torch.randn_like(x)
-        return model_mean + torch.sqrt(POSTERIOR_VARIANCE[t]) * noise 
+        # output1 = SQRT_ALPHA_BAR[t] * predicted_original_image + SQRT_ONE_MINUS_ALPHA_BAR[t] * noise
+        output2 = SQRT_ALPHA_BAR[t-1] * predicted_original_image + SQRT_ONE_MINUS_ALPHA_BAR[t-1] * noise
+
+        # return x - output1 + output2
+        return output2
 
 
 
@@ -99,7 +103,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DIFFUSION_NAME = 'noise'
+    DIFFUSION_NAME = 'noise_naive'
     DATASET = 'MNIST' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
@@ -111,7 +115,7 @@ if __name__ == '__main__':
     T = 300 # (for gaussian this is called beta time steps)
     BATCH_SIZE = 128 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
     LEARNING_RATE = 0.001
-    EPOCHS = 10
+    EPOCHS = 50
 
     # -------------------------------------------------------------------------------------------------------
     # Diffusion Global Parameters

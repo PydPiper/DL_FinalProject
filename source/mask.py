@@ -67,15 +67,65 @@ def forward_diffusion_sample(x_0, t):
     i_count_to_mask = (torch.floor((height * width) * percent_mask)).int()
     noised_x = x_0.clone().detach()
     noised_x = noised_x.reshape((batch, channel, height * width))
-    noise = torch.zeros_like(noised_x)
 
+    # test 1: noise is the same masked portion as the img masking (full noise masking back to x_0)
+    noise = torch.zeros_like(noised_x)
     for i in range(batch):
         noised_x[i,:,:i_count_to_mask[i]] = 1
-        # noise[i,:,:i_count_to_mask[i]] = 1
-
+        noise[i,:,:i_count_to_mask[i]] = 1
     noised_x = noised_x.reshape((batch, channel, height, width))
+    noised_x = noised_x * BETA[t]
+    noise = noise.reshape((batch, channel, height, width))
+    noise = noise
+
+    # test 1.5: noise is the same masked portion as the img masking (delta noise masking back to x_t-1)
+    # noise = torch.zeros_like(noised_x)
+    # i_count_to_mask_prev = i_count_to_mask - 1
+    # i_count_to_mask_prev[i_count_to_mask_prev < 0] = 0
+    # for i in range(batch):
+    #     noised_x[i,:,:i_count_to_mask[i]] = 1
+    #     noise[i,:,i_count_to_mask_prev[i]:i_count_to_mask[i]] = 1
+    # noised_x = noised_x.reshape((batch, channel, height, width))
+    # noised_x = noised_x * BETA[t]
     # noise = noise.reshape((batch, channel, height, width))
-    noise = noised_x - x_0
+    # noise = noise
+
+    # test 1.75: noise is the same masked portion as the img masking (delta img masking back to x_t-1)
+    noised_x_prev = noised_x.clone().detach()
+    percent_mask_prev = (t-1) / T
+    i_count_to_mask_prev = (torch.floor((height * width) * percent_mask_prev)).int()
+    i_count_to_mask_prev[i_count_to_mask_prev < 0] = 0
+    for i in range(batch):
+        noised_x[i,:,:i_count_to_mask[i]] = 1
+        noised_x_prev[i,:,:i_count_to_mask_prev[i]] = 1
+    noised_x = noised_x.reshape((batch, channel, height, width))
+    noised_x_prev = noised_x_prev.reshape((batch, channel, height, width))
+    noise = noised_x - noised_x_prev 
+
+    # test 2: noise is delta of original
+    # for i in range(batch):
+    #     noised_x[i,:,:i_count_to_mask[i]] = 1
+    # noised_x = noised_x.reshape((batch, channel, height, width))
+    # noised_x = noised_x * BETA[t]
+    # noise = noised_x - x_0 
+
+
+    # test 3: noise is full 1s (this makes the most sense thats most similar to gaussian noise with noise being simply the gaussian)
+    # for i in range(batch):
+    #     noised_x[i,:,:i_count_to_mask[i]] = 1
+    # noised_x = noised_x.reshape((batch, channel, height, width))
+    # noised_x = noised_x * BETA[t]
+    # noise = torch.ones_like(noised_x)
+
+
+    # test 4
+    # for i in range(batch):
+    #     noised_x[i,:,:i_count_to_mask[i]] = 1
+    # noised_x = noised_x.reshape((batch, channel, height, width))
+    # noise = torch.randn_like(x_0)
+    # # mean + variance
+    # noised_x = SQRT_ALPHA_BAR[t] * noised_x + SQRT_ONE_MINUS_ALPHA_BAR[t] * noise
+
     # mean + variance
     return noised_x, noise
 
@@ -88,7 +138,6 @@ def sample_timestep(x, t):
     Applies noise to this image, if we are not in the last step yet.
     """
     
-    # Call model (current image - noise prediction)
     pred_noise = model(x, t)
     batch, channel, height, width = x.shape
     pred_noise = pred_noise.reshape((batch, channel, height * width))
@@ -96,8 +145,13 @@ def sample_timestep(x, t):
     i_count_to_mask = (torch.floor((height * width) * percent_mask)).int()
     pred_noise[:,:,:i_count_to_mask] = 0
     pred_noise = pred_noise.reshape((batch, channel, height, width))
-    x_new = x - pred_noise
-    return x_new    
+    x_prev = x - pred_noise
+
+    # x_prev = SQRT_RECIP_ALPHA[t] * (x - BETA[t] * pred_noise / SQRT_ONE_MINUS_ALPHA_BAR[t])
+
+    return x_prev    
+
+
 
 
 

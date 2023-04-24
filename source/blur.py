@@ -43,7 +43,6 @@ def beta_scheduler(steps=300, start=0.0001, end=0.02, beta_type='linear'):
 
 def forward_diffusion_sample(x_0, t):
     """takes an original img and returns a noised version of it at any given time step "t"
-
     :param x_0: _description_
     :type x_0: _type_
     :param t: _description_
@@ -51,18 +50,24 @@ def forward_diffusion_sample(x_0, t):
     :return: _description_
     :rtype: _type_
     """
+    n, c, h, w = x_0.shape
+    noise = torch.zeros_like(x_0)
+    for i in range(n):
+        for j in range(c):
+            sigma = 3
+            x = torch.arange(-h // 2 + 1, h // 2 + 1, dtype=torch.float32).to(DEVICE)
+            y = torch.arange(-w // 2 + 1, w // 2 + 1, dtype=torch.float32).to(DEVICE)
+            y = y[:, None]
+            kernel = torch.exp(-(x ** 2 + y ** 2) / (2 * sigma ** 2))
+            kernel = kernel/kernel.max()
+            noise[i, j, :] = kernel
 
-    # t can come in for n_batch size, need to reshape to multiply
+    x_0 = x_0.to(DEVICE)
+    noise = noise.to(DEVICE)
     if not isinstance(t, int):
         t = t.reshape((t.shape[0],1,1,1))
-
-    # using "reparameterization" we can calcluate any noised sample without iterating over the previous n-samples
-    # x_t = sqrt(alpha_bar)*x_0 + sqrt(1-alpha_bar)*noise
-    x_0 = x_0.to(DEVICE)
-    # rand_like is nothing special just a normal distribution thats the same size as the input
-    noise = torch.randn_like(x_0)
-    # mean + variance
-    return SQRT_ALPHA_BAR[t] * x_0 + SQRT_ONE_MINUS_ALPHA_BAR[t] * noise, noise
+    output = SQRT_ALPHA_BAR[t] * x_0 + SQRT_ONE_MINUS_ALPHA_BAR[t] * noise
+    return output, noise
 
 
 @torch.no_grad()
@@ -77,14 +82,16 @@ def sample_timestep(x, t):
     # the model is trained to predict what the noise is at that time step of a noisy image (ie. img_(t-1) = img_t + noise) 
     # so that here we can subtract out the noise to get to img_(t-1)
     
-    pred_noise = model(x, t)
-    model_mean = SQRT_RECIP_ALPHA[t] * (x - BETA[t] * pred_noise / SQRT_ONE_MINUS_ALPHA_BAR[t])
-    
     if t == 0:
-        return model_mean
+        return x
     else:
+        predicted_noise = model(x, t)
+        predicted_original_image = x - predicted_noise 
         noise = torch.randn_like(x)
-        return model_mean + torch.sqrt(POSTERIOR_VARIANCE[t]) * noise 
+        output1 = SQRT_ALPHA_BAR[t] * predicted_original_image + SQRT_ONE_MINUS_ALPHA_BAR[t] * noise
+        output2 = SQRT_ALPHA_BAR[t-1] * predicted_original_image + SQRT_ONE_MINUS_ALPHA_BAR[t-1] * noise
+
+        return x - output1 + output2
 
 
 
@@ -99,7 +106,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DIFFUSION_NAME = 'noise'
+    DIFFUSION_NAME = 'blur'
     DATASET = 'MNIST' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
