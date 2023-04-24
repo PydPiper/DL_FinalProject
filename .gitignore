@@ -145,5 +145,5 @@ resources/*
 resources/original/*
 *.png
 
-.idea/*
+/.idea/*
 /results/

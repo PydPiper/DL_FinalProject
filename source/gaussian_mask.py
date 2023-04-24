@@ -16,7 +16,7 @@ import numpy as np
 # -------------------------------------------------------------------------------------------------------
 # Import source modules
 # -------------------------------------------------------------------------------------------------------
-import utils_cold
+import utils_cold as utils
 
 # -------------------------------------------------------------------------------------------------------
 # Setup
@@ -71,33 +71,20 @@ def sample_timestep(x, t):
     Applies noise to this image, if we are not in the last step yet.
     """
     # REVISED FOR THE COLD DIFFUSION SAMPLING WHICH SHOULD BE BETTER WHEN SWITCHING TO DETERMINISTIC
-    method = "alg2_cold"
     if t == 0:
         return x
     else:
-        n, c, h, w = x.shape
-        noise1 = torch.zeros_like(x)
-        noise2 = torch.zeros_like(x)
-        for i in range(n):
-            for j in range(c):
-                if isinstance(t, int):
-                    t_int = t
-                else:
-                    t_int = t.item()
-                noise1[i, j, :] = GAUSSIAN_MASK[t_int]
-                noise2[i, j, :] = GAUSSIAN_MASK[t_int-1]
-
-        # call the model to predict the image
-        # note that the loss function has been changed from the original diffusion process!
-        predicted_original_image = model(x, t)
-        output1 = predicted_original_image * noise1
-        output2 = predicted_original_image * noise2
-        if method == "naive":
+        x_pred = model(x, t)
+        if isinstance(t, int):
+            t_int = t
+        else:
+            t_int = t.item()
+        output1, _ = forward_diffusion_sample(x_pred, t_int)
+        output2, _ = forward_diffusion_sample(x_pred, t_int-1)
+        if SAMPLING_METHOD == "naive":
             return output2
         else:
             return x - output1 + output2
-
-
 
 # -------------------------------------------------------------------------------------------------------
 # Star of Process
@@ -122,7 +109,7 @@ if __name__ == '__main__':
     BATCH_SIZE = 64 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
     LEARNING_RATE = 2e-5
     EPOCHS = 10
-
+    SAMPLING_METHOD = "AGLO2"
     # -------------------------------------------------------------------------------------------------------
     # Diffusion Global Parameters
     # -------------------------------------------------------------------------------------------------------
