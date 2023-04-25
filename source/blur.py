@@ -82,6 +82,16 @@ def sample_timestep(x, t):
     # the model is trained to predict what the noise is at that time step of a noisy image (ie. img_(t-1) = img_t + noise) 
     # so that here we can subtract out the noise to get to img_(t-1)
     
+    # pred_noise = model(x, t)
+    # model_mean = SQRT_RECIP_ALPHA[t] * (x - BETA[t] * pred_noise / SQRT_ONE_MINUS_ALPHA_BAR[t])
+    
+    # if t == 0:
+    #     return model_mean
+    # else:
+        # noise = torch.randn_like(x)
+    #     return model_mean + torch.sqrt(POSTERIOR_VARIANCE[t]) * noise 
+
+
     if t == 0:
         return x
     else:
