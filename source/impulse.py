@@ -12,6 +12,7 @@ from torch import nn
 from torch.optim import Adam
 from matplotlib import pyplot as plt
 import numpy as np
+import skimage as sk
 
 # -------------------------------------------------------------------------------------------------------
 # Import source modules
@@ -50,16 +51,8 @@ def forward_diffusion_sample(x_0, t):
     :return: _description_
     :rtype: _type_
     """
-    n, c, h, w = x_0.shape
-    noise = torch.zeros_like(x_0)
-    for i in range(n):
-        if isinstance(t, int):
-            t_int = t
-        else:
-            t_int = t[i].item()
-        noise[i, :] = GAUSSIAN_MASK[t_int]
-    output = x_0*noise
-    return output.to(x_0.dtype).to(DEVICE), noise.to(x_0.dtype).to(DEVICE)
+    output = torch.tensor(sk.util.random_noise(np.array(x_0.cpu()), mode='s&p', amount=.06))
+    return output.to(x_0.dtype).to(DEVICE), None
 
 
 @torch.no_grad()
@@ -96,15 +89,15 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DIFFUSION_NAME = 'gaussian_mask'
-    DATASET = 'CIFAR10' # MNIST CIFAR10 CelebA
+    DIFFUSION_NAME = 'impulse'
+    DATASET = 'MNIST' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
     SHOW_PLOTS = False
     # -------------------------------------------------------------------------------------------------------
     # Hyperparameter Tuning
     # -------------------------------------------------------------------------------------------------------
-    T = 200 # (for gaussian this is called beta time steps)
+    T = 50 # (for gaussian this is called beta time steps)
     BATCH_SIZE = 64 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
     LEARNING_RATE = 2e-5
     EPOCHS = 10
@@ -140,10 +133,10 @@ if __name__ == '__main__':
     # CREATE GAUSSIAN MASK
     # -------------------------------------------------------------------------------------------------------
     GAUSSIAN_MASK = torch.zeros((T, IMG_CHANNELS, IMG_SIZE, IMG_SIZE)).to(DEVICE)
-    variance = 0.001
+    variance = 1
     for t in range(T):
         for c in range(IMG_CHANNELS):
-
+            sigma = 1
             x = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
             y = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
             y = y[:, None]

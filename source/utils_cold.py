@@ -54,6 +54,16 @@ def img_tensor_to_pil(img):
     ])
     return transforms(img)
 
+def img_pil_to_tensor(img):
+    if len(img.shape) > 5:
+        raise ValueError(f'Input img.shape={img.shape}, img.shape must be [channel, height, width]')
+
+    transforms = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.Lambda(lambda data: data/data.max()*2 - 1),
+    ])
+    return transforms(img)
+
 @torch.no_grad()
 def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_train, max_t=300, n_imgs=1, show_n_steps=10, epoch='0',
                             dataset='MNIST', diffusion_name='noise', show_plots=False):

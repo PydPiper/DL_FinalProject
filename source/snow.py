@@ -17,6 +17,7 @@ import numpy as np
 # Import source modules
 # -------------------------------------------------------------------------------------------------------
 import utils_cold as utils
+from corruptions import snow
 
 # -------------------------------------------------------------------------------------------------------
 # Setup
@@ -57,7 +58,7 @@ def forward_diffusion_sample(x_0, t):
             t_int = t
         else:
             t_int = t[i].item()
-        noise[i, :] = GAUSSIAN_MASK[t_int]
+        noise[i, :] = NOISE[t_int]
     output = x_0*noise
     return output.to(x_0.dtype).to(DEVICE), noise.to(x_0.dtype).to(DEVICE)
 
@@ -96,7 +97,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DIFFUSION_NAME = 'gaussian_mask'
+    DIFFUSION_NAME = 'snow'
     DATASET = 'CIFAR10' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
@@ -104,7 +105,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Hyperparameter Tuning
     # -------------------------------------------------------------------------------------------------------
-    T = 200 # (for gaussian this is called beta time steps)
+    T = 50 # (for gaussian this is called beta time steps)
     BATCH_SIZE = 64 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
     LEARNING_RATE = 2e-5
     EPOCHS = 10
@@ -137,23 +138,21 @@ if __name__ == '__main__':
     # NOTE: [0] for 0th sample, this returns the x,y as a tuple, we want the img only so again [0], the shape will be [channel, height, width]
     IMG_CHANNELS = data_train.dataset[0][0].shape[0]
     # -------------------------------------------------------------------------------------------------------
-    # CREATE GAUSSIAN MASK
+    # CREATE SNOW MASK
     # -------------------------------------------------------------------------------------------------------
-    GAUSSIAN_MASK = torch.zeros((T, IMG_CHANNELS, IMG_SIZE, IMG_SIZE)).to(DEVICE)
-    variance = 0.001
+    NOISE = torch.zeros((T, IMG_CHANNELS, IMG_SIZE, IMG_SIZE)).to(DEVICE)
+    variance = 1
     for t in range(T):
         for c in range(IMG_CHANNELS):
+            severity = np.random.randint(1, 6)
+            snow_layer = snow(np.ones((24, 24, 3)), severity)
+            kernel = utils.img_pil_to_tensor(snow_layer)[0].to(DEVICE)
 
-            x = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
-            y = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
-            y = y[:, None]
-            kernel = torch.exp(-(x ** 2 + y ** 2) / (2 * variance))
-            kernel = 1 - kernel / kernel.max()
+
             if t == 0:
-                GAUSSIAN_MASK[t, c, :] = kernel
+                NOISE[t, c, :] = kernel
             else:
-                GAUSSIAN_MASK[t, c, :] = kernel*GAUSSIAN_MASK[t-1, c, :]
-        variance += 0.1
+                NOISE[t, c, :] = kernel*NOISE[t-1, c, :]
 
     # show sample imgs from dataset
     utils.visualize_input_imgs(data_train, 3, DATASET, DIFFUSION_NAME, SHOW_PLOTS)

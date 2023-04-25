@@ -96,15 +96,15 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DIFFUSION_NAME = 'gaussian_mask'
-    DATASET = 'CIFAR10' # MNIST CIFAR10 CelebA
+    DIFFUSION_NAME = 'vertical_mask'
+    DATASET = 'MNIST' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
     SHOW_PLOTS = False
     # -------------------------------------------------------------------------------------------------------
     # Hyperparameter Tuning
     # -------------------------------------------------------------------------------------------------------
-    T = 200 # (for gaussian this is called beta time steps)
+    T = 300 # (for gaussian this is called beta time steps)
     BATCH_SIZE = 64 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
     LEARNING_RATE = 2e-5
     EPOCHS = 10
@@ -143,11 +143,11 @@ if __name__ == '__main__':
     variance = 0.001
     for t in range(T):
         for c in range(IMG_CHANNELS):
-
-            x = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
-            y = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
-            y = y[:, None]
-            kernel = torch.exp(-(x ** 2 + y ** 2) / (2 * variance))
+            kernel = torch.tensor(np.meshgrid(np.linspace(0, IMG_SIZE-1, IMG_SIZE), np.linspace(0, IMG_SIZE-1, IMG_SIZE))[1]).to(DEVICE)
+            # x = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
+            # y = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
+            # y = y[:, None]
+            kernel = torch.exp(-(kernel ** 2) / (2 * variance))
             kernel = 1 - kernel / kernel.max()
             if t == 0:
                 GAUSSIAN_MASK[t, c, :] = kernel
