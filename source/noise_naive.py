@@ -68,14 +68,26 @@ def sample_timestep(x, t):
     # the model is trained to predict what the noise is at that time step of a noisy image (ie. img_(t-1) = img_t + noise) 
     # so that here we can subtract out the noise to get to img_(t-1)
     
-    pred_noise = model(x, t)
-    model_mean = SQRT_RECIP_ALPHA[t] * (x - BETA[t] * pred_noise / SQRT_ONE_MINUS_ALPHA_BAR[t])
-    
+    """
+    Calls the model to predict the noise in the image and returns 
+    the denoised image. 
+    Applies noise to this image, if we are not in the last step yet.
+    """
+    # REVISED FOR THE COLD DIFFUSION SAMPLING WHICH SHOULD BE BETTER WHEN SWITCHING TO DETERMINISTIC
     if t == 0:
-        return model_mean
+        return x
     else:
-        noise = torch.randn_like(x)
-        return model_mean + torch.sqrt(POSTERIOR_VARIANCE[t]) * noise 
+        x_pred = model(x, t)
+        if isinstance(t, int):
+            t_int = t
+        else:
+            t_int = t.item()
+        output1, _ = forward_diffusion_sample(x_pred, t_int)
+        output2, _ = forward_diffusion_sample(x_pred, t_int-1)
+        if SAMPLING_METHOD == "naive":
+            return output2
+        else:
+            return x - output1 + output2
 
 
 
@@ -90,7 +102,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Inputs
     # -------------------------------------------------------------------------------------------------------
-    DIFFUSION_NAME = 'noise'
+    DIFFUSION_NAME = 'noise_naive'
     DATASET = 'MNIST' # MNIST CIFAR10 CelebA
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
@@ -103,7 +115,7 @@ if __name__ == '__main__':
     BATCH_SIZE = 128 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
     LEARNING_RATE = 0.001
     EPOCHS = 10
-
+    SAMPLING_METHOD = 'naive'
     # -------------------------------------------------------------------------------------------------------
     # Start of Process
     # -------------------------------------------------------------------------------------------------------
