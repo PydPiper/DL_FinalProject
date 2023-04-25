@@ -317,13 +317,17 @@ class Unet(nn.Module):
             x = up(x, encode_output, t)
         return self.output(x)
 
-def get_loss(model, x_0, t, forward_diffusion_sample):
+def get_loss(model, x_0, t, forward_diffusion_sample, diffusion_name):
     x_noisy, noise = forward_diffusion_sample(x_0, t)
-    noise_pred = model(x_noisy, t)
-    return torch.nn.functional.l1_loss(noise, noise_pred)
+    if diffusion_name == 'noise':
+        noise_pred = model(x_noisy, t)
+        loss = torch.nn.functional.l1_loss(noise, noise_pred)
+    else:
+        img_prev_pred = model(x_noisy, t)
+        loss = torch.nn.functional.l1_loss(x_0, noise_pred)
 
 
-def train(model, learning_rate, epochs, batch_size, data_train, data_valid, max_t, img_channels, img_size, 
+def train(model, learning_rate, epochs, batch_size, data_train, data_valid, max_t, 
           dataset, diffusion_name, show_plots, sample_timestep, saved_model_filename, forward_diffusion_sample):
 
     optimizer = Adam(model.parameters(), lr=learning_rate)
@@ -337,7 +341,7 @@ def train(model, learning_rate, epochs, batch_size, data_train, data_valid, max_
             optimizer.zero_grad()
 
             t = torch.randint(0, max_t, (batch_size,), device=DEVICE).long()
-            loss = get_loss(model, x, t, forward_diffusion_sample)
+            loss = get_loss(model, x, t, forward_diffusion_sample, diffusion_name)
             running_batch_train_loss += loss.to('cpu').item()
 
             loss.backward()
@@ -352,7 +356,7 @@ def train(model, learning_rate, epochs, batch_size, data_train, data_valid, max_
                 running_batch_valid_loss = 0
                 for valid_step, valid_batch in enumerate(data_valid):
                     x_valid, y_valid = valid_batch
-                    loss = get_loss(model, x_valid, t, forward_diffusion_sample)
+                    loss = get_loss(model, x_valid, t, forward_diffusion_sample, diffusion_name)
                     running_batch_valid_loss += loss.to('cpu').item()
                 avg_valid_loss = running_batch_valid_loss / len(data_valid)
                 log_valid_loss.append(avg_valid_loss)
