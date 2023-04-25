@@ -28,40 +28,35 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Custom Diffusion Functions (custom diffusion functions go here)
 # -------------------------------------------------------------------------------------------------------
 
-def cold_diffusion_mask():
+def sinusoid_cold_diffusion_mask():
     # Currently only works with gaussian
-    gaussian_mask = torch.ones((T, IMG_CHANNELS, IMG_SIZE, IMG_SIZE))
+    mask = torch.ones((T, IMG_CHANNELS, IMG_SIZE, IMG_SIZE)).to(DEVICE)
     # max-1 because variance starts at 1, T-1 because we start nosing from t=1 not t=0
     max_variance = GAUSSIAN_MASKING_PARAMETERS[MASK_MODE]['max_gaussian_variance']
     min_variance = GAUSSIAN_MASKING_PARAMETERS[MASK_MODE]['min_gaussian_variance']
     variance_step_size = (max_variance-min_variance) / (T-1)
     variance = min_variance
     # start 1 so that we dont add noise to t=0
-    indices = torch.arange(0, IMG_SIZE, dtype=torch.float32)
-    xgrid, ygrid = torch.meshgrid(indices, indices, indexing='ij')
     for t in range(1, T):
         if MASK_MODE == "vertical":
-            if DEGRADATION_FUNCTION == "gaussian":
-                kernel = torch.exp(-(xgrid ** 2) / (2 * variance))
-            elif DEGRADATION_FUNCTION == "sinusoidal":
-                kernel = 1 - torch.sin(xgrid * np.pi / IMG_SIZE)
-            else:  # testing high frequency sinusoid  # TODO combine sinusoids together and add freq. term
-                kernel = 1 - (0.5*torch.sin(xgrid * np.pi/IMG_SIZE*8)+0.5)
+            kernel = torch.tensor(
+                np.meshgrid(np.linspace(0, IMG_SIZE - 1, IMG_SIZE), np.linspace(0, IMG_SIZE - 1, IMG_SIZE))[1]).to(
+                DEVICE)
+
+            kernel = 1-torch.sin(kernel*np.pi/IMG_SIZE)
         else:
-            if DEGRADATION_FUNCTION == "gaussian":
-                kernel = torch.exp(-((xgrid-IMG_SIZE/2) ** 2 + (ygrid-IMG_SIZE/2) ** 2) / (2 * variance))
-            elif DEGRADATION_FUNCTION == "sinusoidal":  # sinusoidal
-                kernel = 1 - torch.sin(xgrid*np.pi / IMG_SIZE) * torch.sin(ygrid*np.pi / IMG_SIZE)
-            else:  # testing high frequency sinusoid  # TODO combine sinusoids together and add freq. term
-                kernel = 1 - (0.5*torch.sin(xgrid * np.pi / IMG_SIZE*8) * torch.sin(ygrid * np.pi / IMG_SIZE*8)+0.5)
+            # x = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
+            # y = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
+            x = torch.tensor(np.linspace(0, np.pi, IMG_SIZE)).to(DEVICE)
+            y = torch.tensor(np.linspace(0, np.pi, IMG_SIZE)).to(DEVICE)
+            y = y[:, None]
+            kernel = 1 - torch.sin(x) * torch.sin(y)
 
-        kernel = 1 - kernel / kernel.max()  # normalize
-
+        kernel = 1 - kernel / kernel.max()
         for c in range(IMG_CHANNELS):
-            gaussian_mask[t, c, :] = kernel*gaussian_mask[t-1, c, :]
+            mask[t, c, :] = kernel*mask[t-1, c, :]
         variance += variance_step_size
-
-    return gaussian_mask.to(DEVICE)
+    return mask
 
 # -------------------------------------------------------------------------------------------------------
 # Model Training Functions (do not rename functions here, they are used by trainer)
@@ -122,12 +117,10 @@ if __name__ == '__main__':
     random.seed(0)
     # -------------------------------------------------------------------------------------------------------
     # Inputs
-    # MASK_MODE:
+    # MASK_MODE: either "vertical" for top-down, or "radial" for a centre approach
     # -------------------------------------------------------------------------------------------------------
-    MASK_MODE = "radial"  # 'vertical' or 'radial'
-    DEGRADATION_FUNCTION = "gaussian"  # 'gaussian', 'sinusoidal' or 'hf_sinusoidal'
-    INVERSE_MASK = True  # True or False  # TODO implement an inverse feature
-    DIFFUSION_NAME = 'inpainting_' + DEGRADATION_FUNCTION + "_" + MASK_MODE  # + "_inverse_" + str(INVERSE_MASK).lower()
+    MASK_MODE = "radial"  # this is keyed on in the dictionary below
+    DIFFUSION_NAME = 'inpainting' + "_" + "sinusoid" + "_" + MASK_MODE  # assume only gaussian for now
     DATASET = 'MNIST' # MNIST CIFAR10 CelebA
     SAMPLING_METHOD = "AGLO2"
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
@@ -168,7 +161,7 @@ if __name__ == '__main__':
     # NOTE: alpha.shape == beta.shape, but alpha is a slow decrease from 1 to 1-beta_end 
     ALPHA = 1. - BETA
 
-    GAUSSIAN_MASK = cold_diffusion_mask()
+    GAUSSIAN_MASK = sinusoid_cold_diffusion_mask()
 
     # -------------------------------------------------------------------------------------------------------
     # Visualize Imgs and Fwd Diffusion
