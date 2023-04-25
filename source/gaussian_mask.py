@@ -29,17 +29,26 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # -------------------------------------------------------------------------------------------------------
 
 def cold_diffusion_mask():
+    # Currently only works with gaussian
     gaussian_mask = torch.ones((T, IMG_CHANNELS, IMG_SIZE, IMG_SIZE)).to(DEVICE)
-    
     # max-1 because variance starts at 1, T-1 because we start nosing from t=1 not t=0
-    variance_step_size = (MAX_GAUSSIAN_VARIANCE-1) / (T-1)
-    variance = 1
+    max_variance = GAUSSIAN_MASKING_PARAMETERS[MASK_MODE]['max_gaussian_variance']
+    min_variance = GAUSSIAN_MASKING_PARAMETERS[MASK_MODE]['min_gaussian_variance']
+    variance_step_size = (max_variance-min_variance) / (T-1)
+    variance = min_variance
     # start 1 so that we dont add noise to t=0
     for t in range(1, T):
-        x = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
-        y = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
-        y = y[:, None]
-        kernel = torch.exp(-(x ** 2 + y ** 2) / (2 * variance))
+        if MASK_MODE == "vertical":
+            kernel = torch.tensor(
+                np.meshgrid(np.linspace(0, IMG_SIZE - 1, IMG_SIZE), np.linspace(0, IMG_SIZE - 1, IMG_SIZE))[1]).to(
+                DEVICE)
+            kernel = torch.exp(-(kernel ** 2) / (2 * variance))
+        else:
+            x = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
+            y = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
+            y = y[:, None]
+            kernel = torch.exp(-(x ** 2 + y ** 2) / (2 * variance))
+
         kernel = 1 - kernel / kernel.max()
         for c in range(IMG_CHANNELS):
             gaussian_mask[t, c, :] = kernel*gaussian_mask[t-1, c, :]
@@ -105,9 +114,12 @@ if __name__ == '__main__':
     random.seed(0)
     # -------------------------------------------------------------------------------------------------------
     # Inputs
+    # MASK_MODE: either "vertical" for top-down, or "radial" for a centre approach
     # -------------------------------------------------------------------------------------------------------
-    DIFFUSION_NAME = 'gaussian_mask'
+    MASK_MODE = "vertical"  # this is keyed on in the dictionary below
+    DIFFUSION_NAME = 'inpainting' + "_" + "gaussian"+ "_" + MASK_MODE  # assume only gaussian for now
     DATASET = 'MNIST' # MNIST CIFAR10 CelebA
+    SAMPLING_METHOD = "AGLO2"
     IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
     SHOW_PLOTS = False
@@ -119,8 +131,14 @@ if __name__ == '__main__':
     BATCH_SIZE = 64 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
     LEARNING_RATE = 2e-5
     EPOCHS = 10
-    SAMPLING_METHOD = "AGLO2"
-    MAX_GAUSSIAN_VARIANCE = IMG_SIZE/2 # the max variance the model should have at time step T, roughtly want IMG_SIZE/2
+    GAUSSIAN_MASKING_PARAMETERS = {
+        'vertical':
+            {'max_gaussian_variance': IMG_SIZE*2,
+             'min_gaussian_variance': 1},
+        'radial':
+            {'max_gaussian_variance': IMG_SIZE/2, # the max variance the model should have at time step T, roughtly want IMG_SIZE/2
+             'min_gaussian_variance': 1}
+    }
     # -------------------------------------------------------------------------------------------------------
     # Start of Process
     # -------------------------------------------------------------------------------------------------------
