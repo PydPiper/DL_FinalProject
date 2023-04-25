@@ -49,15 +49,15 @@ def img_tensor_to_pil(img):
     return transforms(img)
 
 @torch.no_grad()
-def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_train, max_t=300, n_imgs=1, show_n_steps=10, epoch='0',
-                            dataset='MNIST', diffusion_name='noise', show_plots=False):
+def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data, max_t=300, n_imgs=1, show_n_steps=10, epoch='0',
+                            dataset='MNIST', diffusion_name='noise', show_plots=False, validation=False):
     # Create Random Sample 
     # imgs = torch.randn((n_imgs, img_channels, img_size, img_size), device=DEVICE)
 
     # get imgs out of dataset to do simulated fwd pass
-    imgs_0 = data_train.dataset[0][0].unsqueeze(0).to(DEVICE)
+    imgs_0 = data.dataset[0][0].unsqueeze(0).to(DEVICE)
     for i in range(1, n_imgs):
-        img = data_train.dataset[i][0].unsqueeze(0).to(DEVICE)
+        img = data.dataset[i][0].unsqueeze(0).to(DEVICE)
         imgs_0 = torch.cat((imgs_0, img), dim=0)
 
     stepsize = int(max_t/show_n_steps)
@@ -74,9 +74,9 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_trai
 
 
     # Encode actual sample (note [0] is 1st sample, then [0] is for imgs values)
-    imgs, noise = forward_diffusion_sample(data_train.dataset[0][0].unsqueeze(0).to(DEVICE), max_t-1)
+    imgs, noise = forward_diffusion_sample(data.dataset[0][0].unsqueeze(0).to(DEVICE), max_t-1)
     for i in range(1, n_imgs):
-        img, noise = forward_diffusion_sample(data_train.dataset[i][0].unsqueeze(0).to(DEVICE), max_t-1)
+        img, noise = forward_diffusion_sample(data.dataset[i][0].unsqueeze(0).to(DEVICE), max_t-1)
         imgs = torch.cat((imgs, img), dim=0)
 
 
@@ -99,9 +99,11 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_trai
     # ssim = calc_error_ssim(img_start, img_end)
     fid = 0
     ssim = 0
-    print(f'rsme: {rmse:4f} | fid: {fid:4f}, ssim: {ssim:4f}')
 
-    fig.savefig(f'../results/{dataset}/{diffusion_name}/{diffusion_name}_{epoch}.png')
+    flag = 'valid' if validation else 'train' 
+    print(f'{flag} => rsme: {rmse:4f} | fid: {fid:4f}, ssim: {ssim:4f}')
+
+    fig.savefig(f'../results/{dataset}/{diffusion_name}/{flag}_{diffusion_name}_{epoch}.png')
     if show_plots:
         fig.show()
     plt.close()
@@ -153,6 +155,17 @@ def load_data(dataset='MNIST', img_size=32, batch_size=128):
 # -------------------------------------------------------------------------------------------------------
 # Diffusion Functions
 # -------------------------------------------------------------------------------------------------------
+
+def beta_scheduler(steps=300, start=0.0001, end=0.02, beta_type='linear'):
+    # note step=1e-4 and end=0.2 is from the original DDPM paper: https://arxiv.org/abs/2102.09672
+    # there is also cosine, sigmoid and other types to implement
+    if beta_type == 'linear':
+        rv = torch.linspace(start, end, steps).to(DEVICE)
+    else:
+        raise ValueError(f'Incorrect beta scheduler type={beta_type}')
+    return rv
+
+
 def simluate_forward_diffusion(dataloader, forward_diffusion_sample, max_time=300, n_imgs=1, show_n_steps=5, dataset='MNIST', diffusion_name='noise', show_plots=False):
 
     iter_dataloader = iter(dataloader)
@@ -324,8 +337,8 @@ def get_loss(model, x_0, t, forward_diffusion_sample, diffusion_name):
         loss = torch.nn.functional.l1_loss(noise, noise_pred)
     else:
         img_prev_pred = model(x_noisy, t)
-        loss = torch.nn.functional.l1_loss(x_0, noise_pred)
-
+        loss = torch.nn.functional.l1_loss(x_0.to(DEVICE), img_prev_pred)
+    return loss
 
 def train(model, learning_rate, epochs, batch_size, data_train, data_valid, max_t, 
           dataset, diffusion_name, show_plots, sample_timestep, saved_model_filename, forward_diffusion_sample):
@@ -364,8 +377,10 @@ def train(model, learning_rate, epochs, batch_size, data_train, data_valid, max_
                 print(f"Epoch {epoch:03d} | step {step:03d} | Train Loss: {avg_train_loss:.4f} | Valid Loss: {avg_valid_loss:.4f}")
                 if epoch % 5 == 0:
                     sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_train, max_t, 5, 10, epoch, dataset, diffusion_name, show_plots)
+                    sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_valid, max_t, 5, 10, epoch, dataset, diffusion_name, show_plots, True)
     
     sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_train, max_t, 5, 10, epoch, dataset, diffusion_name, show_plots)
+    sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_valid, max_t, 5, 10, epoch, dataset, diffusion_name, show_plots, True)
     plot_learning_curve(log_train_loss, log_valid_loss, dataset, diffusion_name, show_plots)
 
     # save the model (only model parameters)

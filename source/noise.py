@@ -28,15 +28,6 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Custom Diffusion Functions (custom diffusion functions go here)
 # -------------------------------------------------------------------------------------------------------
 
-def beta_scheduler(steps=300, start=0.0001, end=0.02, beta_type='linear'):
-    # note step=1e-4 and end=0.2 is from the original DDPM paper: https://arxiv.org/abs/2102.09672
-    # there is also cosine, sigmoid and other types to implement
-    if beta_type == 'linear':
-        rv = torch.linspace(start, end, steps).to(DEVICE)
-    else:
-        raise ValueError(f'Incorrect beta scheduler type={beta_type}')
-    return rv
-
 # -------------------------------------------------------------------------------------------------------
 # Model Training Functions (do not rename functions here, they are used by trainer)
 # -------------------------------------------------------------------------------------------------------
@@ -114,11 +105,20 @@ if __name__ == '__main__':
     EPOCHS = 10
 
     # -------------------------------------------------------------------------------------------------------
+    # Start of Process
+    # -------------------------------------------------------------------------------------------------------
+    os.makedirs(f'../results/{DATASET}/{DIFFUSION_NAME}', exist_ok=True)
+
+    data_train, data_valid = utils.load_data(DATASET, IMG_SIZE, BATCH_SIZE)
+    # NOTE: [0] for 0th sample, this returns the x,y as a tuple, we want the img only so again [0], the shape will be [channel, height, width]
+    IMG_CHANNELS = data_train.dataset[0][0].shape[0]
+
+    # -------------------------------------------------------------------------------------------------------
     # Diffusion Global Parameters
     # -------------------------------------------------------------------------------------------------------
     # Define beta schedule
     # NOTE: T is also the size of beta
-    BETA = beta_scheduler(steps=T)
+    BETA = utils.beta_scheduler(steps=T)
     # NOTE: alpha.shape == beta.shape, but alpha is a slow decrease from 1 to 1-beta_end 
     ALPHA = 1. - BETA
     # alpha_bar is the product_sum of alpha (ie: alphas[0], alphas[0]*alphas[1], alphas[0]*alphas[1]*alphas[2],...)
@@ -131,16 +131,10 @@ if __name__ == '__main__':
     # used in backward pass
     SQRT_RECIP_ALPHA = torch.sqrt(1.0 / ALPHA)
     POSTERIOR_VARIANCE = BETA * (1. - ALPHA_BAR_PREV) / (1. - ALPHA_BAR)
-
-    # -------------------------------------------------------------------------------------------------------
-    # Start of Process
-    # -------------------------------------------------------------------------------------------------------
-    os.makedirs(f'../results/{DATASET}/{DIFFUSION_NAME}', exist_ok=True)
-
-    data_train, data_valid = utils.load_data(DATASET, IMG_SIZE, BATCH_SIZE)
-    # NOTE: [0] for 0th sample, this returns the x,y as a tuple, we want the img only so again [0], the shape will be [channel, height, width]
-    IMG_CHANNELS = data_train.dataset[0][0].shape[0]
     
+    # -------------------------------------------------------------------------------------------------------
+    # Visualize Imgs and Fwd Diffusion
+    # -------------------------------------------------------------------------------------------------------
     # show sample imgs from dataset
     utils.visualize_input_imgs(data_train, 3, DATASET, DIFFUSION_NAME, SHOW_PLOTS)
 
@@ -148,7 +142,9 @@ if __name__ == '__main__':
     utils.simluate_forward_diffusion(data_train, forward_diffusion_sample, max_time=T, n_imgs=5, show_n_steps=10, 
                                      dataset=DATASET, diffusion_name=DIFFUSION_NAME, show_plots=SHOW_PLOTS)
 
-    # run training
+    # -------------------------------------------------------------------------------------------------------
+    # Train
+    # -------------------------------------------------------------------------------------------------------
     model = utils.Unet(IMG_CHANNELS)
     model.to(DEVICE)
     SAVED_MODEL_FILENAME = f'../results/{DATASET}/{DIFFUSION_NAME}/{DIFFUSION_NAME}_{DATASET}.model'

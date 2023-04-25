@@ -16,7 +16,7 @@ import numpy as np
 # -------------------------------------------------------------------------------------------------------
 # Import source modules
 # -------------------------------------------------------------------------------------------------------
-import utils_cold as utils
+import utils as utils
 
 # -------------------------------------------------------------------------------------------------------
 # Setup
@@ -28,14 +28,23 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Custom Diffusion Functions (custom diffusion functions go here)
 # -------------------------------------------------------------------------------------------------------
 
-def beta_scheduler(steps=300, start=0.0001, end=0.02, beta_type='linear'):
-    # note step=1e-4 and end=0.2 is from the original DDPM paper: https://arxiv.org/abs/2102.09672
-    # there is also cosine, sigmoid and other types to implement
-    if beta_type == 'linear':
-        rv = torch.linspace(start, end, steps).to(DEVICE)
-    else:
-        raise ValueError(f'Incorrect beta scheduler type={beta_type}')
-    return rv
+def cold_diffusion_mask():
+    gaussian_mask = torch.ones((T, IMG_CHANNELS, IMG_SIZE, IMG_SIZE)).to(DEVICE)
+    
+    # max-1 because variance starts at 1, T-1 because we start nosing from t=1 not t=0
+    variance_step_size = (MAX_GAUSSIAN_VARIANCE-1) / (T-1)
+    variance = 1
+    # start 1 so that we dont add noise to t=0
+    for t in range(1, T):
+        x = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
+        y = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
+        y = y[:, None]
+        kernel = torch.exp(-(x ** 2 + y ** 2) / (2 * variance))
+        kernel = 1 - kernel / kernel.max()
+        for c in range(IMG_CHANNELS):
+            gaussian_mask[t, c, :] = kernel*gaussian_mask[t-1, c, :]
+        variance += variance_step_size
+    return gaussian_mask
 
 # -------------------------------------------------------------------------------------------------------
 # Model Training Functions (do not rename functions here, they are used by trainer)
@@ -51,7 +60,7 @@ def forward_diffusion_sample(x_0, t):
     :rtype: _type_
     """
     n, c, h, w = x_0.shape
-    noise = torch.zeros_like(x_0)
+    noise = torch.zeros_like(x_0).to(DEVICE)
     for i in range(n):
         for j in range(c):
             if isinstance(t, int):
@@ -59,8 +68,8 @@ def forward_diffusion_sample(x_0, t):
             else:
                 t_int = t[i].item()
             noise[i, j, :] = GAUSSIAN_MASK[t_int]
-    output = x_0*noise
-    return output.to(x_0.dtype).to(DEVICE), noise.to(x_0.dtype).to(DEVICE)
+    output = x_0.to(DEVICE)*noise
+    return output, noise
 
 
 @torch.no_grad()
@@ -106,29 +115,12 @@ if __name__ == '__main__':
     # Hyperparameter Tuning
     # -------------------------------------------------------------------------------------------------------
     T = 50 # (for gaussian this is called beta time steps)
+    # NOTE: increasing beyond 64 breaks the restoration!!!
     BATCH_SIZE = 64 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
     LEARNING_RATE = 2e-5
     EPOCHS = 10
     SAMPLING_METHOD = "AGLO2"
-    # -------------------------------------------------------------------------------------------------------
-    # Diffusion Global Parameters
-    # -------------------------------------------------------------------------------------------------------
-    # Define beta schedule
-    # NOTE: T is also the size of beta
-    BETA = beta_scheduler(steps=T, end=0.1)
-    # NOTE: alpha.shape == beta.shape, but alpha is a slow decrease from 1 to 1-beta_end 
-    ALPHA = 1. - BETA
-    # alpha_bar is the product_sum of alpha (ie: alphas[0], alphas[0]*alphas[1], alphas[0]*alphas[1]*alphas[2],...)
-    ALPHA_BAR = torch.cumprod(ALPHA, axis=0)
-    # alpha_bar_prev is simply just the start from 1 to alpha_bar[-1]
-    ALPHA_BAR_PREV = torch.cat((torch.tensor([1.]).to(DEVICE), ALPHA_BAR[:-1]))
-    # used in x_t calc
-    SQRT_ALPHA_BAR = torch.sqrt(ALPHA_BAR)
-    SQRT_ONE_MINUS_ALPHA_BAR = torch.sqrt(1. - ALPHA_BAR)
-    # used in backward pass
-    SQRT_RECIP_ALPHA = torch.sqrt(1.0 / ALPHA)
-    POSTERIOR_VARIANCE = BETA * (1. - ALPHA_BAR_PREV) / (1. - ALPHA_BAR)
-
+    MAX_GAUSSIAN_VARIANCE = IMG_SIZE/2 # the max variance the model should have at time step T, roughtly want IMG_SIZE/2
     # -------------------------------------------------------------------------------------------------------
     # Start of Process
     # -------------------------------------------------------------------------------------------------------
@@ -137,25 +129,22 @@ if __name__ == '__main__':
     data_train, data_valid = utils.load_data(DATASET, IMG_SIZE, BATCH_SIZE)
     # NOTE: [0] for 0th sample, this returns the x,y as a tuple, we want the img only so again [0], the shape will be [channel, height, width]
     IMG_CHANNELS = data_train.dataset[0][0].shape[0]
-    # -------------------------------------------------------------------------------------------------------
-    # CREATE GAUSSIAN MASK
-    # -------------------------------------------------------------------------------------------------------
-    GAUSSIAN_MASK = torch.zeros((T, IMG_CHANNELS, IMG_SIZE, IMG_SIZE)).to(DEVICE)
-    variance = 1
-    for t in range(T):
-        for c in range(IMG_CHANNELS):
-            sigma = 1
-            x = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
-            y = torch.arange(-IMG_SIZE // 2 + 1, IMG_SIZE // 2 + 1, dtype=torch.float32).to(DEVICE)
-            y = y[:, None]
-            kernel = torch.exp(-(x ** 2 + y ** 2) / (2 * variance))
-            kernel = 1 - kernel / kernel.max()
-            if t == 0:
-                GAUSSIAN_MASK[t, c, :] = kernel
-            else:
-                GAUSSIAN_MASK[t, c, :] = kernel*GAUSSIAN_MASK[t-1, c, :]
-        variance += 0.1
 
+    # -------------------------------------------------------------------------------------------------------
+    # Diffusion Global Parameters
+    # -------------------------------------------------------------------------------------------------------
+    # NOTE: Currently Cold Diffusion scheduler is linear, but it could be changed to ease the degredation at a different rate by using BETA/ALPHA
+    # Define beta schedule
+    # NOTE: T is also the size of beta
+    BETA = utils.beta_scheduler(steps=T, end=0.1)
+    # NOTE: alpha.shape == beta.shape, but alpha is a slow decrease from 1 to 1-beta_end 
+    ALPHA = 1. - BETA
+
+    GAUSSIAN_MASK = cold_diffusion_mask()
+
+    # -------------------------------------------------------------------------------------------------------
+    # Visualize Imgs and Fwd Diffusion
+    # -------------------------------------------------------------------------------------------------------
     # show sample imgs from dataset
     utils.visualize_input_imgs(data_train, 3, DATASET, DIFFUSION_NAME, SHOW_PLOTS)
 
@@ -163,15 +152,14 @@ if __name__ == '__main__':
     utils.simluate_forward_diffusion(data_train, forward_diffusion_sample, max_time=T, n_imgs=5, show_n_steps=10, 
                                      dataset=DATASET, diffusion_name=DIFFUSION_NAME, show_plots=SHOW_PLOTS)
 
-
-
-
-    # run training
+    # -------------------------------------------------------------------------------------------------------
+    # Train
+    # -------------------------------------------------------------------------------------------------------
     model = utils.Unet(IMG_CHANNELS)
     model.to(DEVICE)
     SAVED_MODEL_FILENAME = f'../results/{DATASET}/{DIFFUSION_NAME}/{DIFFUSION_NAME}_{DATASET}.model'
     if TRAIN:
-        model = utils.train(model, LEARNING_RATE, EPOCHS, BATCH_SIZE, data_train, data_valid, T, IMG_CHANNELS, IMG_SIZE, DATASET,
+        model = utils.train(model, LEARNING_RATE, EPOCHS, BATCH_SIZE, data_train, data_valid, T, DATASET,
           DIFFUSION_NAME, SHOW_PLOTS, sample_timestep, SAVED_MODEL_FILENAME, forward_diffusion_sample)
     elif os.path.exists(SAVED_MODEL_FILENAME):
         model = utils.load_model(SAVED_MODEL_FILENAME, IMG_CHANNELS)
