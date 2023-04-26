@@ -10,10 +10,13 @@ import torch
 import torchvision
 from torch import nn
 from torch.optim import Adam
+import ignite
+from pytorch_fid.inception import InceptionV3
 from matplotlib import pyplot as plt
 import numpy as np
 from skimage.metrics import structural_similarity as ssim
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+import PIL
 
 
 # -------------------------------------------------------------------------------------------------------
@@ -68,7 +71,7 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data, max
         imgs_0 = torch.cat((imgs_0, img), dim=0)
 
     stepsize = int(max_t/show_n_steps)
-    fig = plt.figure()
+    fig = plt.figure(figsize=(24,6))
     col_i = 0
 
     for col_i, t in enumerate(range(0, max_t, stepsize)):
@@ -99,13 +102,10 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data, max
                 ax.imshow(img, cmap='gray') # NOTE: matplotlib makes grayscale color by default unless you call out cmap=gray
             col_i += 1
 
-
-    rmse = calc_error_rmse(imgs_0[0], imgs[0])
-    # TODO: finish these
-    # fid = calc_error_fid(img_start, img_end)
-    # ssim = calc_error_ssim(img_start, img_end)
-    fid = 0
-    ssim = 0
+    # NOTE: these are only computed for the set of n_imgs
+    rmse = calc_error_rmse(imgs_0, imgs)
+    fid = calc_error_fid(imgs_0, imgs)
+    ssim = calc_error_ssim(imgs_0, imgs)
 
     flag = 'valid' if validation else 'train' 
     print(f'{flag} => rsme: {rmse:4f} | fid: {fid:4f}, ssim: {ssim:4f}')
@@ -408,8 +408,11 @@ def calc_error_rmse(img1, img2):
     """
     return torch.sqrt(torch.mean((img1 - img2)**2))
 
-def calc_error_fid(img1, img2):
-    """https://machinelearningmastery.com/how-to-implement-the-frechet-inception-distance-fid-from-scratch/
+def calc_error_fid(img1:torch.Tensor, img2:torch.Tensor, implementation='pytorch_fid'):
+    """https://pytorch.org/ignite/generated/ignite.metrics.FID.html
+    https://pytorch-ignite.ai/blog/gan-evaluation-with-fid-and-is/#evaluation-metrics
+    https://github.com/pytorch/ignite/issues/2423
+    https://github.com/mseitzer/pytorch-fid
 
     :param img1: _description_
     :type img1: _type_
@@ -419,26 +422,73 @@ def calc_error_fid(img1, img2):
     :rtype: _type_
     """
 
-    # torch only lets you compute 2d cov, so need to reshape (channel, height, width) to (pixels, channels)
-    img1 = img1.to('cpu').numpy().reshape((img1.shape[0], img1.shape[1]*img1.shape[2]))
-    img2 = img2.to('cpu').numpy().reshape((img2.shape[0], img2.shape[1]*img2.shape[2]))
+    # condition input imgs if they are not 3 channel that FID is expecting
+    if img1.shape[1] == 1:
+        b, c, h, w = img1.shape
+        img1 = img1.expand(b, 3, h, w)
+        img2 = img2.expand(b, 3, h, w)
 
-    # mean (across channels) and covariance
-    mu1, sigma1 = img1.mean(axis=0), np.cov(img1, rowvar=False)
-    mu2, sigma2 = img2.mean(axis=0), np.cov(img2, rowvar=False)
-    # sum squared difference between means
-    sum_sqrd_diff = ((mu1-mu2)**2).sum()
-    # sqrt of similarity between the 2 covariance
-    cov_mean = np.sqrt(sigma1.dot(sigma2))
-    # correct imaginary numbers
-    if np.iscomplexobj(cov_mean):
-        cov_mean = cov_mean.real
-    fid = sum_sqrd_diff + np.trace(sigma1 + sigma2 - 2.0 * cov_mean)
-    return fid
+    def interpolate(batch, fn):
+        arr = []
+        for img in batch:
+            pil_img = torchvision.transforms.ToPILImage()(img)
+            resized_img = pil_img.resize((299,299), PIL.Image.BILINEAR)
+            resized_img = torchvision.transforms.ToTensor()(resized_img)
+            # torchvision.utils.save_image(resized_img, fn)
+            arr.append(resized_img)
+        return torch.stack(arr)
+    img1 = interpolate(img1, 'test.png')
+    img2 = interpolate(img2, 'test2.png')
+
+    def eval_step(engine, batch):
+        return batch
+
+    default_evaluator = ignite.ignite.engine.Engine(eval_step)
+
+    if implementation == 'ignite':
+        metric = ignite.ignite.metrics.FID()
+        metric.attach(default_evaluator, "fid")
+        state = default_evaluator.run([[img1, img2]])
+        return state.metrics["fid"]
+    else:
+        # wrapper class as feature_extractor
+        class WrapperInceptionV3(nn.Module):
+
+            def __init__(self, fid_incv3):
+                super().__init__()
+                self.fid_incv3 = fid_incv3
+
+            @torch.no_grad()
+            def forward(self, x):
+                y = self.fid_incv3(x)
+                y = y[0]
+                y = y[:, :, 0, 0]
+                return y
+
+        # use cpu rather than cuda to get comparable results
+        device = "cpu"
+
+        # pytorch_fid model
+        dims = 2048
+        block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
+        model = InceptionV3([block_idx]).to(device)
+
+        # wrapper model to pytorch_fid model
+        wrapper_model = WrapperInceptionV3(model)
+        wrapper_model.eval()
+
+        # comparable metric
+        metric = ignite.ignite.metrics.FID(num_features=dims, feature_extractor=wrapper_model, device=DEVICE)
+        metric.attach(default_evaluator, "fid")
+        state = default_evaluator.run([[img1, img2]])
+        return state.metrics["fid"]
+
 
 def calc_error_ssim(img1, img2):
     """Calcuate Structural Similarity Index Measure (SSIM) is the perceived quality of digital pictures
 
+    https://pytorch.org/ignite/generated/ignite.metrics.SSIM.html#ssim
+    
     https://scikit-image.org/docs/stable/api/skimage.metrics.html#skimage.metrics.structural_similarity
     https://scikit-image.org/docs/stable/auto_examples/transform/plot_ssim.html
 
@@ -448,8 +498,13 @@ def calc_error_ssim(img1, img2):
     :type img2: _type_
     """
     
-    img1 = img1.to('cpu').numpy()
-    img2 = img2.to('cpu').numpy()
+    def eval_step(engine, batch):
+        return batch
 
-    rv = ssim(img1, img2, channel_axis=0, data_range=1)
+    default_evaluator = ignite.ignite.engine.Engine(eval_step)
+    metric = ignite.ignite.metrics.SSIM(data_range=1.0, device=DEVICE)
+    metric.attach(default_evaluator, 'ssim')
+    state = default_evaluator.run([[img1, img2]])
+    rv = state.metrics['ssim']
+
     return rv
