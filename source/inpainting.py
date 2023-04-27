@@ -125,7 +125,7 @@ if __name__ == '__main__':
     # MASK_MODE:
     # -------------------------------------------------------------------------------------------------------
     MASK_MODE = "radial"  # 'vertical' or 'radial'
-    DEGRADATION_FUNCTION = "gaussian"  # 'gaussian', 'sinusoidal' or 'hf_sinusoidal'
+    DEGRADATION_FUNCTION = "sinusoidal"  # 'gaussian', 'sinusoidal' or 'hf_sinusoidal'
     INVERSE_MASK = True  # True or False  # TODO implement an inverse feature
     DIFFUSION_NAME = 'inpainting_' + DEGRADATION_FUNCTION + "_" + MASK_MODE  # + "_inverse_" + str(INVERSE_MASK).lower()
     DATASET = 'MNIST' # MNIST CIFAR10 CelebA
@@ -183,7 +183,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Train
     # -------------------------------------------------------------------------------------------------------
-    model = utils.Unet(IMG_CHANNELS)
+    model = utils.Unet(IMG_CHANNELS, IMG_SIZE)
     model.to(DEVICE)
     SAVED_MODEL_FILENAME = f'../results/{DATASET}/{DIFFUSION_NAME}/{DIFFUSION_NAME}_{DATASET}.model'
     if TRAIN:
