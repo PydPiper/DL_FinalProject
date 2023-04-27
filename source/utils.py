@@ -3,6 +3,7 @@
 # -------------------------------------------------------------------------------------------------------
 import os
 import random
+import time
 # -------------------------------------------------------------------------------------------------------
 # Import pip libs
 # -------------------------------------------------------------------------------------------------------
@@ -89,6 +90,10 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data, max
         img, noise = forward_diffusion_sample(data.dataset[i][0].unsqueeze(0).to(DEVICE), max_t-1)
         imgs = torch.cat((imgs, img), dim=0)
 
+    rmse_noise = calc_error_rmse(imgs_0, imgs)
+    fid_noise = calc_error_fid(imgs_0, imgs)
+    ssim_noise = calc_error_ssim(imgs_0, imgs)
+
 
     col_i = 0
     for t in range(0, max_t)[::-1]:
@@ -108,7 +113,10 @@ def sample_plot_model_image(forward_diffusion_sample, sample_timestep, data, max
     ssim = calc_error_ssim(imgs_0, imgs)
 
     flag = 'valid' if validation else 'train' 
-    print(f'{flag} => rsme: {rmse:4f} | fid: {fid:4f}, ssim: {ssim:4f}')
+    error_text = f'{flag} noise/diffused => rsme: {rmse_noise:4f}/{rmse:4f} | fid: {fid_noise:4f}/{fid:4f}, ssim: {ssim_noise:4f}/{ssim:4f}'
+    with open(f'../results/{dataset}/{diffusion_name}/{flag}_{diffusion_name}_error.txt', 'w') as f:
+        f.write(error_text)
+    print(error_text)
 
     fig.savefig(f'../results/{dataset}/{diffusion_name}/{flag}_{diffusion_name}_{epoch}.png')
     if show_plots:
@@ -205,12 +213,13 @@ def load_model(filename, img_channels):
     model.load_state_dict(torch.load(filename))
     # must used model.eval() when using BatchNorm or Dropout
     model.eval()
-    return model
+    return model.to(DEVICE)
 
 class Encode(nn.Module):
     def __init__(self, dim_in_ch, dim_out_ch, dim_time_emb):
         super().__init__()
         self.linear =  nn.Linear(dim_time_emb, dim_out_ch)
+        # (h + 2*  padding - dilation*(kernel_size - 1) - 1)/stride + 1
         self.conv1 = nn.Conv2d(dim_in_ch, dim_out_ch, kernel_size=3, padding='same')
         self.conv2 = nn.Conv2d(dim_out_ch, dim_out_ch, kernel_size=3, padding='same')
         self.norm = nn.BatchNorm2d(dim_out_ch)
@@ -235,6 +244,7 @@ class Decode(nn.Module):
         super().__init__()
         self.linear =  nn.Linear(dim_time_emb, dim_out_ch)
         # self.deconv = nn.Upsample(scale_factor=2, mode='nearest')
+        # (H −1)×stride−2×padding+dilation×(kernel_size−1)+output_padding+1
         self.deconv = nn.ConvTranspose2d(dim_in_ch, dim_in_ch, kernel_size=up_kernel, stride=up_stride, padding=up_padding)
         self.conv1 = nn.Conv2d(dim_in_ch*2, dim_out_ch, kernel_size=3, padding='same')
         self.conv2 = nn.Conv2d(dim_out_ch, dim_out_ch, kernel_size=3, padding='same')
@@ -245,6 +255,7 @@ class Decode(nn.Module):
         # Upsample
         h = self.deconv(x)
         # cat input with encode input
+        # print(x.shape, h.shape, x_encode.shape)
         x = torch.cat((h, x_encode), dim=1)           
         # First conv
         h = self.norm(self.relu(self.conv1(x)))
@@ -277,7 +288,7 @@ class Unet(nn.Module):
     """
     A simplified variant of the Unet architecture.
     """
-    def __init__(self, img_channels=3):
+    def __init__(self, img_channels=3, img_size=24):
         super().__init__()
         image_channels = img_channels
         initial_projection_kernel = 3 # 7
@@ -308,12 +319,21 @@ class Unet(nn.Module):
 
         # Upsample
         self.ups = nn.ModuleList([])
-        up_params = [
-            [3, 1, 0],
-            [4, 2, 1],
-            [4, 2, 1],
-            [4, 2, 1],
-        ]
+        up_params = {
+            24: [
+                # k, s, p
+                [3, 1, 0],
+                [4, 2, 1],
+                [4, 2, 1],
+                [4, 2, 1],
+                ],
+            64: [
+                [3, 3, 2],
+                [4, 2, 1],
+                [4, 2, 1],
+                [4, 2, 1],
+            ]
+        }[img_size]
         for i in range(len(up_channels)-1):
             self.ups.append(Decode(up_channels[i], up_channels[i+1], time_emb_dim, *up_params[i]))
 
@@ -330,6 +350,7 @@ class Unet(nn.Module):
             x = down(x, t)
             if i != self.n_channels-1:
                 encode_outputs.append(x) 
+                # for every down the img hxw is halved so 24 > 12 > 6 > 3 > 1 or 64 > 32 > 16 > 8 > 4
                 x = self.pool(x)
 
         for up in self.ups:
@@ -355,6 +376,7 @@ def train(model, learning_rate, epochs, batch_size, data_train, data_valid, max_
     log_train_loss = []
     log_valid_loss = []
     running_batch_train_loss = 0
+    start_time = time.time()
     for epoch in range(epochs):
         for step, batch in enumerate(data_train):
             x, y = batch
@@ -381,7 +403,7 @@ def train(model, learning_rate, epochs, batch_size, data_train, data_valid, max_
                 avg_valid_loss = running_batch_valid_loss / len(data_valid)
                 log_valid_loss.append(avg_valid_loss)
                 
-                print(f"Epoch {epoch:03d} | step {step:03d} | Train Loss: {avg_train_loss:.4f} | Valid Loss: {avg_valid_loss:.4f}")
+                print(f"Epoch {epoch:03d} | step {step:03d} | Train Loss: {avg_train_loss:.4f} | Valid Loss: {avg_valid_loss:.4f} | Time: {time.time()-start_time:.2f}")
                 if epoch % 5 == 0:
                     sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_train, max_t, 5, 10, epoch, dataset, diffusion_name, show_plots)
                     sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_valid, max_t, 5, 10, epoch, dataset, diffusion_name, show_plots, True)

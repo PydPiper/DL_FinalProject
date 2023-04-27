@@ -100,8 +100,8 @@ if __name__ == '__main__':
     # Hyperparameter Tuning
     # -------------------------------------------------------------------------------------------------------
     T = 300 # (for gaussian this is called beta time steps)
-    BATCH_SIZE = 128 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
-    LEARNING_RATE = 0.001
+    BATCH_SIZE = 32 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
+    LEARNING_RATE = 2e-5
     EPOCHS = 10
 
     # -------------------------------------------------------------------------------------------------------
@@ -145,7 +145,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Train
     # -------------------------------------------------------------------------------------------------------
-    model = utils.Unet(IMG_CHANNELS)
+    model = utils.Unet(IMG_CHANNELS, IMG_SIZE)
     model.to(DEVICE)
     SAVED_MODEL_FILENAME = f'../results/{DATASET}/{DIFFUSION_NAME}/{DIFFUSION_NAME}_{DATASET}.model'
     if TRAIN:
@@ -153,5 +153,7 @@ if __name__ == '__main__':
           DIFFUSION_NAME, SHOW_PLOTS, sample_timestep, SAVED_MODEL_FILENAME, forward_diffusion_sample)
     elif os.path.exists(SAVED_MODEL_FILENAME):
         model = utils.load_model(SAVED_MODEL_FILENAME, IMG_CHANNELS)
+        utils.sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_train, max_t=T, n_imgs=5, show_n_steps=10, epoch='9',
+                            dataset=DATASET, diffusion_name=DIFFUSION_NAME, show_plots=SHOW_PLOTS, validation=False)
     else:
         raise FileNotFoundError('Missing training model')

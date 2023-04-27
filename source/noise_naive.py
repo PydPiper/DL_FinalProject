@@ -157,7 +157,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Train
     # -------------------------------------------------------------------------------------------------------
-    model = utils.Unet(IMG_CHANNELS)
+    model = utils.Unet(IMG_CHANNELS, IMG_SIZE)
     model.to(DEVICE)
     SAVED_MODEL_FILENAME = f'../results/{DATASET}/{DIFFUSION_NAME}/{DIFFUSION_NAME}_{DATASET}.model'
     if TRAIN:
