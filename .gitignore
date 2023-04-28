@@ -143,6 +143,7 @@ root_mnist_test/*
 *.model
 resources/*
 resources/original/*
+paper/*
 *.png
 
 /.idea/*
