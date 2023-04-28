@@ -79,12 +79,11 @@ def forward_diffusion_sample(x_0, t):
     n, c, h, w = x_0.shape
     noise = torch.zeros_like(x_0).to(DEVICE)
     for i in range(n):
-        for j in range(c):
-            if isinstance(t, int):
-                t_int = t
-            else:
-                t_int = t[i].item()
-            noise[i, j, :] = GAUSSIAN_MASK[t_int]
+        if isinstance(t, int):
+            t_int = t
+        else:
+            t_int = t[i].item()
+        noise[i] = GAUSSIAN_MASK[t_int]
     output = x_0.to(DEVICE)*noise
     return output, noise
 
@@ -125,12 +124,12 @@ if __name__ == '__main__':
     # MASK_MODE:
     # -------------------------------------------------------------------------------------------------------
     MASK_MODE = "radial"  # 'vertical' or 'radial'
-    DEGRADATION_FUNCTION = "sinusoidal"  # 'gaussian', 'sinusoidal' or 'hf_sinusoidal'
+    DEGRADATION_FUNCTION = "gaussian"  # 'gaussian', 'sinusoidal' or 'hf_sinusoidal'
     INVERSE_MASK = True  # True or False  # TODO implement an inverse feature
-    DIFFUSION_NAME = 'inpainting_' + DEGRADATION_FUNCTION + "_" + MASK_MODE  # + "_inverse_" + str(INVERSE_MASK).lower()
-    DATASET = 'MNIST' # MNIST CIFAR10 CelebA
-    SAMPLING_METHOD = "AGLO2"
-    IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
+    DATASET = 'CelebA' # MNIST CIFAR10 CelebA
+    SAMPLING_METHOD = "naive" # naive algo2
+    DIFFUSION_NAME = f'inpainting_{DEGRADATION_FUNCTION}_{MASK_MODE}_{SAMPLING_METHOD}'
+    IMG_SIZE = 64 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
     SHOW_PLOTS = False
     # -------------------------------------------------------------------------------------------------------
@@ -138,7 +137,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     T = 50 # (for gaussian this is called beta time steps)
     # NOTE: increasing beyond 64 breaks the restoration!!!
-    BATCH_SIZE = 64 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
+    BATCH_SIZE = 32 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
     LEARNING_RATE = 2e-5
     EPOCHS = 10
     GAUSSIAN_MASKING_PARAMETERS = {
@@ -146,7 +145,7 @@ if __name__ == '__main__':
             {'max_gaussian_variance': IMG_SIZE*2,
              'min_gaussian_variance': 1},
         'radial':
-            {'max_gaussian_variance': IMG_SIZE/2, # the max variance the model should have at time step T, roughtly want IMG_SIZE/2
+            {'max_gaussian_variance': IMG_SIZE/2 if IMG_SIZE == 24 else IMG_SIZE*2, # the max variance the model should have at time step T, roughtly want IMG_SIZE/2
              'min_gaussian_variance': 1}
     }
     # -------------------------------------------------------------------------------------------------------
@@ -183,13 +182,14 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Train
     # -------------------------------------------------------------------------------------------------------
-    model = utils.Unet(IMG_CHANNELS, IMG_SIZE)
-    model.to(DEVICE)
     SAVED_MODEL_FILENAME = f'../results/{DATASET}/{DIFFUSION_NAME}/{DIFFUSION_NAME}_{DATASET}.model'
     if TRAIN:
+        model = utils.Unet(IMG_CHANNELS, IMG_SIZE)
+        model.to(DEVICE)
         model = utils.train(model, LEARNING_RATE, EPOCHS, BATCH_SIZE, data_train, data_valid, T, DATASET,
           DIFFUSION_NAME, SHOW_PLOTS, sample_timestep, SAVED_MODEL_FILENAME, forward_diffusion_sample)
     elif os.path.exists(SAVED_MODEL_FILENAME):
         model = utils.load_model(SAVED_MODEL_FILENAME, IMG_CHANNELS)
+        utils.sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_train, T, 5, 10, f'{EPOCHS-1}', DATASET, DIFFUSION_NAME, SHOW_PLOTS)
     else:
         raise FileNotFoundError('Missing training model')

@@ -207,13 +207,14 @@ def simluate_forward_diffusion(dataloader, forward_diffusion_sample, max_time=30
 # -------------------------------------------------------------------------------------------------------
 # Unet Model
 # -------------------------------------------------------------------------------------------------------
-def load_model(filename, img_channels):
-    model = Unet(img_channels)
+def load_model(filename, img_channels, img_size):
+    model = Unet(img_channels, img_size)
     # load model parameters
     model.load_state_dict(torch.load(filename))
     # must used model.eval() when using BatchNorm or Dropout
-    model.eval()
-    return model.to(DEVICE)
+    model = model.to(DEVICE)
+    # model.eval() # TODO: for some reason, it appears to be backward for us than everything that i read online, the only way to use TRAIN=False is to comment this out and let the model compute batch norm
+    return model
 
 class Encode(nn.Module):
     def __init__(self, dim_in_ch, dim_out_ch, dim_time_emb):

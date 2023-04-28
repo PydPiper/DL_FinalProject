@@ -103,8 +103,8 @@ if __name__ == '__main__':
     # Inputs
     # -------------------------------------------------------------------------------------------------------
     DIFFUSION_NAME = 'noise_naive'
-    DATASET = 'MNIST' # MNIST CIFAR10 CelebA
-    IMG_SIZE = 24 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
+    DATASET = 'CelebA' # MNIST CIFAR10 CelebA
+    IMG_SIZE = 64 # resize img to smaller than original helps with training (MNIST is already 24x24 though)
     TRAIN = True # True will train a new model and save it in ../trained_model/ otherwise it will try to load one if it exist
     SHOW_PLOTS = False
     
@@ -112,8 +112,8 @@ if __name__ == '__main__':
     # Hyperparameter Tuning
     # -------------------------------------------------------------------------------------------------------
     T = 300 # (for gaussian this is called beta time steps)
-    BATCH_SIZE = 128 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
-    LEARNING_RATE = 0.001
+    BATCH_SIZE = 32 # batch size to process the imgs, larger the batch the more avging happens for gradient training updates
+    LEARNING_RATE = 2e-5
     EPOCHS = 10
     SAMPLING_METHOD = 'naive'
     # -------------------------------------------------------------------------------------------------------
@@ -157,13 +157,14 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------------------
     # Train
     # -------------------------------------------------------------------------------------------------------
-    model = utils.Unet(IMG_CHANNELS, IMG_SIZE)
-    model.to(DEVICE)
     SAVED_MODEL_FILENAME = f'../results/{DATASET}/{DIFFUSION_NAME}/{DIFFUSION_NAME}_{DATASET}.model'
     if TRAIN:
+        model = utils.Unet(IMG_CHANNELS, IMG_SIZE)
+        model.to(DEVICE)
         model = utils.train(model, LEARNING_RATE, EPOCHS, BATCH_SIZE, data_train, data_valid, T, DATASET,
           DIFFUSION_NAME, SHOW_PLOTS, sample_timestep, SAVED_MODEL_FILENAME, forward_diffusion_sample)
     elif os.path.exists(SAVED_MODEL_FILENAME):
-        model = utils.load_model(SAVED_MODEL_FILENAME, IMG_CHANNELS)
+        model = utils.load_model(SAVED_MODEL_FILENAME, IMG_CHANNELS, IMG_SIZE)
+        utils.sample_plot_model_image(forward_diffusion_sample, sample_timestep, data_train, T, 5, 10, f'{EPOCHS-1}', DATASET, DIFFUSION_NAME, SHOW_PLOTS)
     else:
         raise FileNotFoundError('Missing training model')
